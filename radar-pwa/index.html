@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Radar Haritası">
+<meta name="theme-color" content="#0f1218">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<title>Radar Haritası</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+:root{
+  --bg:#0f1218;--panel:#181c25;--card:#1e2330;--border:#2a3040;
+  --text:#e4e8f0;--muted:#7a8399;--accent:#4dabf7;
+  --radar:#ff6b6b;--control:#ffd43b;--corridor:#51cf66;
+  --safe-top:env(safe-area-inset-top,0px);--safe-bottom:env(safe-area-inset-bottom,0px);
+}
+html,body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);height:100%;overflow:hidden;touch-action:manipulation}
+
+#map{position:absolute;inset:0;z-index:1}
+.leaflet-control-zoom,.leaflet-control-attribution{display:none!important}
+
+/* ── Search bar ── */
+.search-bar{
+  position:fixed;top:calc(var(--safe-top) + 12px);left:12px;right:12px;
+  z-index:1000;background:var(--panel);border:1px solid var(--border);border-radius:16px;
+  box-shadow:0 4px 24px rgba(0,0,0,0.5);overflow:hidden;transition:all 0.3s ease;
+}
+.search-row{display:flex;align-items:center;gap:10px;padding:12px 16px;position:relative}
+.search-row+.search-row{border-top:1px solid var(--border)}
+.search-dots{display:flex;flex-direction:column;align-items:center;gap:0;flex-shrink:0;width:16px}
+.sdot{width:10px;height:10px;border-radius:50%}
+.sdot.from{background:var(--accent);box-shadow:0 0 6px rgba(77,171,247,0.4)}
+.sdot.to{background:var(--radar);box-shadow:0 0 6px rgba(255,107,107,0.4)}
+.sline{width:2px;height:14px;background:var(--border)}
+
+.search-input{
+  flex:1;background:transparent;border:none;color:var(--text);
+  font-family:'DM Sans',sans-serif;font-size:15px;outline:none;min-height:20px;
+}
+.search-input::placeholder{color:var(--muted)}
+
+.search-actions{display:flex;align-items:center;gap:6px;padding:8px 12px;border-top:1px solid var(--border)}
+
+.btn{border:none;border-radius:12px;font-family:'DM Sans',sans-serif;font-weight:600;cursor:pointer;transition:all 0.15s;display:flex;align-items:center;justify-content:center;gap:6px}
+.btn:active{transform:scale(0.97);opacity:0.9}
+.btn-primary{background:var(--accent);color:#fff;padding:12px 20px;font-size:14px;flex:1}
+.btn-icon{background:var(--card);color:var(--muted);width:44px;height:44px;border-radius:12px;font-size:18px;border:1px solid var(--border)}
+.btn-icon:active{background:var(--border)}
+
+/* ── City Picker ── */
+.picker-overlay{
+  display:none;position:fixed;inset:0;z-index:2000;background:var(--bg);
+  flex-direction:column;
+}
+.picker-overlay.active{display:flex}
+.picker-header{padding:calc(var(--safe-top) + 12px) 16px 12px;display:flex;align-items:center;gap:12px}
+.picker-input{
+  flex:1;background:var(--card);border:1px solid var(--border);border-radius:12px;
+  padding:12px 16px;font-size:16px;color:var(--text);font-family:'DM Sans',sans-serif;
+  outline:none;
+}
+.picker-input:focus{border-color:var(--accent)}
+.picker-quick{display:flex;gap:6px;padding:0 16px 12px;flex-wrap:wrap}
+.quick-chip{
+  background:var(--card);border:1px solid var(--border);border-radius:10px;
+  padding:8px 14px;color:var(--text);font-family:'DM Sans',sans-serif;
+  font-size:13px;cursor:pointer;transition:all 0.15s;
+}
+.quick-chip:active{background:var(--border)}
+.picker-list{flex:1;overflow-y:auto;padding:0 16px;-webkit-overflow-scrolling:touch}
+.picker-item{
+  padding:14px 4px;border-bottom:1px solid var(--border);
+  font-size:15px;cursor:pointer;transition:background 0.1s;
+}
+.picker-item:active{background:var(--card)}
+
+/* ── Nav header ── */
+.nav-header{
+  position:fixed;top:0;left:0;right:0;z-index:1001;display:none;
+  padding:calc(var(--safe-top) + 8px) 16px 12px;
+  background:linear-gradient(to bottom,var(--panel),var(--panel) 90%,transparent);
+}
+.nav-header.active{display:block}
+.nav-instruction{
+  background:var(--card);border:1px solid var(--border);border-radius:16px;
+  padding:16px 20px;display:flex;align-items:center;gap:14px;
+  box-shadow:0 4px 20px rgba(0,0,0,0.4);
+}
+.nav-arrow{font-size:32px;flex-shrink:0}
+.nav-detail h2{font-size:16px;font-weight:600;margin-bottom:2px}
+.nav-detail span{font-size:13px;color:var(--muted)}
+
+/* ── Bottom panel ── */
+.bottom-panel{
+  position:fixed;bottom:0;left:0;right:0;z-index:1000;
+  padding:0 12px calc(var(--safe-bottom) + 12px);pointer-events:none;
+}
+.bottom-panel>*{pointer-events:auto}
+.route-info{
+  background:var(--panel);border:1px solid var(--border);border-radius:20px;
+  box-shadow:0 -4px 24px rgba(0,0,0,0.4);overflow:hidden;display:none;
+}
+.route-info.active{display:block}
+.route-summary{display:flex;align-items:center;padding:16px 20px;gap:16px}
+.route-eta{text-align:center}
+.route-eta .time{font-family:'JetBrains Mono',monospace;font-size:28px;font-weight:700;color:var(--accent);line-height:1}
+.route-eta .unit{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-top:2px}
+.route-divider{width:1px;height:40px;background:var(--border)}
+.route-meta{flex:1}
+.route-meta .dist{font-size:15px;font-weight:600}
+.route-meta .via{font-size:12px;color:var(--muted);margin-top:2px}
+
+.radar-strip{display:flex;gap:0;border-top:1px solid var(--border)}
+.radar-chip{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:12px 8px;font-size:13px}
+.radar-chip .num{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:16px}
+.radar-chip.r .num{color:var(--radar)}
+.radar-chip.c .num{color:var(--control)}
+.radar-chip.k .num{color:var(--corridor)}
+
+.steps-drawer{max-height:0;overflow:hidden;transition:max-height 0.3s ease;border-top:1px solid var(--border);scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.steps-drawer::-webkit-scrollbar{width:4px}
+.steps-drawer::-webkit-scrollbar-track{background:transparent}
+.steps-drawer::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+.steps-drawer.open{max-height:280px;overflow-y:auto}
+.step-item{display:flex;align-items:flex-start;gap:12px;padding:12px 20px;border-bottom:1px solid var(--border);font-size:13px}
+.step-item:last-child{border-bottom:none}
+.step-icon{font-size:18px;flex-shrink:0;margin-top:1px}
+.step-text{flex:1;line-height:1.4}
+.step-dist{color:var(--muted);font-family:'JetBrains Mono',monospace;font-size:12px;flex-shrink:0}
+
+.route-actions{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border)}
+.btn-nav{
+  flex:1;background:var(--accent);color:#fff;border:none;border-radius:14px;
+  padding:14px;font-family:'DM Sans',sans-serif;font-size:15px;font-weight:600;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;
+}
+.btn-nav:active{opacity:0.9;transform:scale(0.98)}
+.btn-nav.stop{background:var(--radar)}
+.btn-steps{
+  background:var(--card);border:1px solid var(--border);color:var(--muted);
+  border-radius:14px;width:48px;display:flex;align-items:center;justify-content:center;
+  font-size:20px;cursor:pointer;
+}
+
+/* ── FABs ── */
+.fab-group{position:fixed;right:12px;z-index:999;display:none;flex-direction:column;gap:8px}
+.fab-group.top{top:calc(var(--safe-top) + 80px)}
+.fab{
+  width:48px;height:48px;border-radius:14px;
+  background:var(--panel);border:1px solid var(--border);
+  display:flex;align-items:center;justify-content:center;
+  font-size:20px;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,0.3);transition:all 0.15s;
+}
+.fab:active{background:var(--card);transform:scale(0.95)}
+.fab.on{background:var(--accent);border-color:var(--accent)}
+
+/* ── Speed ── */
+.speed-box{
+  position:fixed;bottom:calc(var(--safe-bottom) + 12px);left:12px;z-index:999;display:none;
+  background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:10px 16px;
+  box-shadow:0 4px 16px rgba(0,0,0,0.3);text-align:center;
+}
+.speed-box.active{display:block}
+.speed-val{font-family:'JetBrains Mono',monospace;font-size:28px;font-weight:700;line-height:1}
+.speed-unit{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px}
+
+/* ── Legend ── */
+.legend-float{
+  position:fixed;z-index:999;bottom:calc(var(--safe-bottom) + 12px);left:50%;transform:translateX(-50%);
+  background:var(--panel);border:1px solid var(--border);border-radius:12px;
+  padding:8px 16px;display:flex;gap:14px;font-size:11px;box-shadow:0 4px 12px rgba(0,0,0,0.3);
+  transition:all 0.3s ease;
+}
+.legend-float.hidden{opacity:0;pointer-events:none;transform:translateX(-50%) translateY(20px)}
+.li{display:flex;align-items:center;gap:5px}
+.ld{width:8px;height:8px;border-radius:50%}
+
+/* ── GPS dot ── */
+.gps-dot{width:18px;height:18px;position:relative}
+.gps-dot::before{content:'';position:absolute;inset:0;background:var(--accent);border-radius:50%;border:3px solid #fff;box-shadow:0 0 12px rgba(77,171,247,0.6)}
+.gps-dot::after{content:'';position:absolute;top:-8px;left:-8px;right:-8px;bottom:-8px;background:rgba(77,171,247,0.15);border-radius:50%;animation:gps-p 2s infinite}
+@keyframes gps-p{0%{transform:scale(1);opacity:0.6}100%{transform:scale(2.5);opacity:0}}
+
+.gps-nav{width:28px;height:28px;position:relative}
+.gps-nav::before{content:'';position:absolute;inset:2px;background:var(--accent);clip-path:polygon(50% 0%,100% 100%,50% 75%,0% 100%);filter:drop-shadow(0 2px 6px rgba(77,171,247,0.6));transition:transform 0.3s}
+
+/* ── Popups ── */
+.leaflet-popup-content-wrapper{background:var(--panel)!important;color:var(--text)!important;border-radius:14px!important;border:1px solid var(--border)!important;box-shadow:0 8px 24px rgba(0,0,0,0.4)!important}
+.leaflet-popup-tip{background:var(--panel)!important}
+.leaflet-popup-content{font-family:'DM Sans',sans-serif!important;font-size:13px!important;margin:10px 14px!important}
+.leaflet-popup-close-button{color:var(--muted)!important}
+
+@media(min-width:769px){
+  .search-bar{left:16px;right:auto;width:420px;top:16px}
+  .bottom-panel{left:16px;right:auto;width:420px;bottom:16px}
+  .fab-group.top{top:16px;right:16px}
+  .legend-float{bottom:24px}
+}
+
+/* ── Radar warning banner ── */
+.radar-warning{
+  position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(0.8);
+  z-index:1600;display:none;
+  background:rgba(15,18,24,0.95);border:2px solid var(--radar);border-radius:24px;
+  padding:24px 32px;text-align:center;min-width:280px;
+  box-shadow:0 0 60px rgba(255,107,107,0.3),0 8px 32px rgba(0,0,0,0.5);
+  opacity:0;transition:all 0.3s cubic-bezier(0.34,1.56,0.64,1);
+}
+.radar-warning.active{display:block;opacity:1;transform:translate(-50%,-50%) scale(1)}
+.radar-warning.control{border-color:var(--control);box-shadow:0 0 60px rgba(255,212,59,0.3),0 8px 32px rgba(0,0,0,0.5)}
+.radar-warning.corridor{border-color:var(--corridor);box-shadow:0 0 60px rgba(81,207,102,0.3),0 8px 32px rgba(0,0,0,0.5)}
+.rw-icon{font-size:48px;margin-bottom:8px;animation:rw-bounce 0.6s ease}
+.rw-title{font-size:18px;font-weight:700;margin-bottom:4px}
+.rw-dist{font-size:14px;color:var(--muted);font-family:'JetBrains Mono',monospace}
+.rw-type{font-size:12px;color:var(--muted);margin-top:6px}
+@keyframes rw-bounce{0%{transform:scale(0.5)}50%{transform:scale(1.3)}100%{transform:scale(1)}}
+
+/* Warning strip at top during nav (persistent, smaller) */
+.radar-strip-warn{
+  position:fixed;top:calc(var(--safe-top) + 80px);left:12px;right:12px;
+  z-index:1002;display:none;
+  background:rgba(255,107,107,0.15);border:1px solid var(--radar);border-radius:14px;
+  padding:10px 16px;
+  display:none;align-items:center;gap:10px;
+  animation:rw-slide 0.3s ease;
+}
+.radar-strip-warn.active{display:flex}
+.radar-strip-warn.control{background:rgba(255,212,59,0.15);border-color:var(--control)}
+.radar-strip-warn.corridor{background:rgba(81,207,102,0.15);border-color:var(--corridor)}
+.rsw-icon{font-size:24px;flex-shrink:0}
+.rsw-info{flex:1}
+.rsw-info strong{font-size:14px;display:block}
+.rsw-info span{font-size:12px;color:var(--muted);font-family:'JetBrains Mono',monospace}
+@keyframes rw-slide{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
+
+/* ── Loading overlay ── */
+.loading-overlay{
+  position:fixed;inset:0;z-index:1500;
+  background:rgba(15,18,24,0.6);
+  display:none;align-items:center;justify-content:center;
+}
+.loading-overlay.active{display:flex}
+.loading-spinner{
+  width:48px;height:48px;border-radius:50%;
+  border:3px solid var(--border);border-top-color:var(--accent);
+  animation:spin 0.8s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+<div class="loading-overlay" id="loader"><div class="loading-spinner"></div></div>
+
+<!-- ═══ RADAR WARNING (popup) ═══ -->
+<div class="radar-warning" id="radarWarn">
+  <div class="rw-icon" id="rwIcon">📡</div>
+  <div class="rw-title" id="rwTitle">Radar Yaklaşıyor!</div>
+  <div class="rw-dist" id="rwDist">1.0 km</div>
+  <div class="rw-type" id="rwType">Radarlı Trafik Uygulaması</div>
+</div>
+
+<!-- ═══ RADAR WARNING STRIP (nav mode, persistent) ═══ -->
+<div class="radar-strip-warn" id="radarStrip">
+  <div class="rsw-icon" id="rswIcon">📡</div>
+  <div class="rsw-info">
+    <strong id="rswTitle">Radar</strong>
+    <span id="rswDist">-- m</span>
+  </div>
+</div>
+
+<!-- ═══ SEARCH ═══ -->
+<div class="search-bar" id="searchBar">
+  <div class="search-row">
+    <div class="search-dots">
+      <div class="sdot from"></div>
+      <div class="sline"></div>
+      <div class="sdot to"></div>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;gap:8px">
+      <input class="search-input" id="fromInput" placeholder="Konumunuz" readonly onclick="openPicker('from')">
+      <input class="search-input" id="toInput" placeholder="Nereye gideceksiniz?" readonly onclick="openPicker('to')">
+    </div>
+    <button class="btn-icon" onclick="swapInputs()">⇅</button>
+  </div>
+  <div class="search-actions">
+    <button class="btn btn-icon" onclick="locateMe()">📍</button>
+    <button class="btn btn-primary" id="routeBtn" onclick="calcRoute()">Rota Oluştur</button>
+    <button class="btn btn-icon" onclick="clearAll()">✕</button>
+  </div>
+</div>
+
+<!-- ═══ CITY PICKER ═══ -->
+<div class="picker-overlay" id="picker">
+  <div class="picker-header">
+    <button class="btn-icon" onclick="closePicker()" style="font-size:22px">←</button>
+    <input class="picker-input" id="pickerQ" placeholder="İl ara..." oninput="filterList(this.value)">
+  </div>
+  <div class="picker-quick" id="quickChips"></div>
+  <div class="picker-list" id="pickerList"></div>
+</div>
+
+<!-- ═══ NAV HEADER ═══ -->
+<div class="nav-header" id="navHdr">
+  <div class="nav-instruction">
+    <div class="nav-arrow" id="nArrow">↑</div>
+    <div class="nav-detail">
+      <h2 id="nText">Rotaya devam edin</h2>
+      <span id="nDist">--</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ BOTTOM ═══ -->
+<div class="bottom-panel">
+  <div class="route-info" id="routeInfo">
+    <div class="route-summary">
+      <div class="route-eta">
+        <div class="time" id="etaTime">--</div>
+        <div class="unit" id="etaUnit">dk</div>
+      </div>
+      <div class="route-divider"></div>
+      <div class="route-meta">
+        <div class="dist" id="rDist">-- km</div>
+        <div class="via" id="rVia">--</div>
+      </div>
+    </div>
+    <div class="radar-strip">
+      <div class="radar-chip r"><span>📡</span><span class="num" id="cR">0</span></div>
+      <div class="radar-chip c"><span>🚧</span><span class="num" id="cC">0</span></div>
+      <div class="radar-chip k"><span>🛣️</span><span class="num" id="cK">0</span></div>
+    </div>
+    <div class="steps-drawer" id="stepsDrw"></div>
+    <div class="route-actions">
+      <button class="btn-steps" onclick="toggleSteps()">☰</button>
+      <button class="btn-nav" id="navBtn" onclick="startNav()"><span>▶</span> Navigasyonu Başlat</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ FABs ═══ -->
+<div class="fab-group top" id="fabs">
+  <div class="fab" onclick="backToSearch()" title="Geri">✕</div>
+  <div class="fab" onclick="locateMe()">📍</div>
+  <div class="fab" onclick="toggleFollow()" id="followFab">🧭</div>
+</div>
+
+<!-- ═══ Speed ═══ -->
+<div class="speed-box" id="speedBox">
+  <div class="speed-val" id="spdVal">0</div>
+  <div class="speed-unit">km/s</div>
+</div>
+
+<!-- ═══ Legend ═══ -->
+<div class="legend-float" id="legend">
+  <div class="li"><div class="ld" style="background:var(--radar)"></div>Radar</div>
+  <div class="li"><div class="ld" style="background:var(--control)"></div>Kontrol</div>
+  <div class="li"><div class="ld" style="background:var(--corridor)"></div>Hız Koridoru</div>
+</div>
+
+<script>
+// ═══════════ DATA ═══════════
+const C=[
+  {n:"Adana",lt:37.0,ln:35.32},{n:"Adıyaman",lt:37.76,ln:38.28},{n:"Afyonkarahisar",lt:38.73,ln:30.54},
+  {n:"Ağrı",lt:39.72,ln:43.05},{n:"Aksaray",lt:38.37,ln:34.03},{n:"Amasya",lt:40.65,ln:35.83},
+  {n:"Ankara",lt:39.93,ln:32.86},{n:"Antalya",lt:36.88,ln:30.71},{n:"Ardahan",lt:41.11,ln:42.7},
+  {n:"Artvin",lt:41.18,ln:41.82},{n:"Aydın",lt:37.85,ln:27.85},{n:"Balıkesir",lt:39.65,ln:27.88},
+  {n:"Bartın",lt:41.64,ln:32.34},{n:"Batman",lt:37.89,ln:41.13},{n:"Bayburt",lt:40.26,ln:40.22},
+  {n:"Bilecik",lt:40.05,ln:30.0},{n:"Bingöl",lt:38.88,ln:40.5},{n:"Bitlis",lt:38.39,ln:42.12},
+  {n:"Bolu",lt:40.73,ln:31.61},{n:"Burdur",lt:37.72,ln:30.29},{n:"Bursa",lt:40.19,ln:29.06},
+  {n:"Çanakkale",lt:40.15,ln:26.41},{n:"Çankırı",lt:40.6,ln:33.62},{n:"Çorum",lt:40.55,ln:34.95},
+  {n:"Denizli",lt:37.77,ln:29.09},{n:"Diyarbakır",lt:37.91,ln:40.24},{n:"Düzce",lt:40.84,ln:31.16},
+  {n:"Edirne",lt:41.68,ln:26.56},{n:"Elazığ",lt:38.67,ln:39.22},{n:"Erzincan",lt:39.75,ln:39.49},
+  {n:"Erzurum",lt:39.9,ln:41.27},{n:"Eskişehir",lt:39.78,ln:30.52},{n:"Gaziantep",lt:37.07,ln:37.38},
+  {n:"Giresun",lt:40.91,ln:38.39},{n:"Gümüşhane",lt:40.46,ln:39.48},{n:"Hakkari",lt:37.58,ln:43.74},
+  {n:"Hatay",lt:36.2,ln:36.16},{n:"Iğdır",lt:39.92,ln:44.05},{n:"Isparta",lt:37.76,ln:30.55},
+  {n:"İstanbul",lt:41.01,ln:28.98},{n:"İzmir",lt:38.42,ln:27.14},{n:"Kahramanmaraş",lt:37.58,ln:36.94},
+  {n:"Karabük",lt:41.2,ln:32.63},{n:"Karaman",lt:37.18,ln:33.23},{n:"Kars",lt:40.6,ln:43.1},
+  {n:"Kastamonu",lt:41.39,ln:33.78},{n:"Kayseri",lt:38.73,ln:35.48},{n:"Kırıkkale",lt:39.85,ln:33.51},
+  {n:"Kırklareli",lt:41.74,ln:27.23},{n:"Kırşehir",lt:39.15,ln:34.16},{n:"Kilis",lt:36.72,ln:37.12},
+  {n:"Kocaeli",lt:40.77,ln:29.92},{n:"Konya",lt:37.87,ln:32.48},{n:"Kütahya",lt:39.42,ln:29.98},
+  {n:"Malatya",lt:38.35,ln:38.31},{n:"Manisa",lt:38.61,ln:27.43},{n:"Mardin",lt:37.31,ln:40.73},
+  {n:"Mersin",lt:36.8,ln:34.63},{n:"Muğla",lt:37.21,ln:28.36},{n:"Muş",lt:38.74,ln:41.49},
+  {n:"Nevşehir",lt:38.62,ln:34.71},{n:"Niğde",lt:37.97,ln:34.68},{n:"Ordu",lt:40.98,ln:37.88},
+  {n:"Osmaniye",lt:37.07,ln:36.25},{n:"Rize",lt:41.02,ln:40.52},{n:"Sakarya",lt:40.69,ln:30.4},
+  {n:"Samsun",lt:41.29,ln:36.33},{n:"Şanlıurfa",lt:37.16,ln:38.79},{n:"Siirt",lt:37.93,ln:41.94},
+  {n:"Sinop",lt:42.03,ln:35.15},{n:"Sivas",lt:39.75,ln:37.01},{n:"Şırnak",lt:37.41,ln:42.46},
+  {n:"Tekirdağ",lt:41.0,ln:27.51},{n:"Tokat",lt:40.31,ln:36.55},{n:"Trabzon",lt:41.0,ln:39.72},
+  {n:"Tunceli",lt:39.11,ln:39.55},{n:"Uşak",lt:38.67,ln:29.41},{n:"Van",lt:38.49,ln:43.38},
+  {n:"Yalova",lt:40.65,ln:29.27},{n:"Yozgat",lt:39.82,ln:34.8},{n:"Zonguldak",lt:41.45,ln:31.79}
+].sort((a,b)=>a.n.localeCompare(b.n,'tr'));
+
+const POP=['İstanbul','Ankara','İzmir','Antalya','Bursa','Konya','Trabzon','Gaziantep'];
+
+// ═══════════ MAP ═══════════
+const map=L.map('map',{center:[39,35],zoom:6,zoomControl:false,attributionControl:false});
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:19}).addTo(map);
+const routeLayer=L.layerGroup().addTo(map);
+const radarLayer=L.layerGroup().addTo(map);
+const gpsLayer=L.layerGroup().addTo(map);
+
+// ═══════════ STATE ═══════════
+let fromSel=null,toSel=null,pickFor=null,rd=null;
+let isNav=false,isFollow=false,gpsWatch=null;
+let uLat=null,uLng=null,uHead=null,uSpd=0;
+let stOpen=false;
+let radarPoints=[];       // {lat,lng,type,icon,label,count,alerted1km,alerted500m}
+let activeWarning=null;   // timeout handle for auto-dismiss
+let audioCtx=null;        // Web Audio for beep sounds
+
+// ═══════════ PICKER ═══════════
+function openPicker(t){
+  pickFor=t;
+  document.getElementById('picker').classList.add('active');
+  const q=document.getElementById('pickerQ');q.value='';
+  setTimeout(()=>q.focus(),100);
+  renderList(C);
+  document.getElementById('quickChips').innerHTML=POP.map(n=>
+    `<div class="quick-chip" onclick="pickCity('${n}')">${n}</div>`
+  ).join('');
+}
+function closePicker(){document.getElementById('picker').classList.remove('active')}
+function renderList(arr){
+  document.getElementById('pickerList').innerHTML=arr.map(c=>
+    `<div class="picker-item" onclick="pickCity('${c.n}')">${c.n}</div>`
+  ).join('');
+}
+function filterList(q){renderList(C.filter(c=>c.n.toLowerCase().includes(q.toLowerCase())))}
+function pickCity(n){
+  const city=C.find(c=>c.n===n);if(!city)return;
+  if(pickFor==='from'){fromSel=city;document.getElementById('fromInput').value=city.n}
+  else{toSel=city;document.getElementById('toInput').value=city.n}
+  closePicker();
+}
+function swapInputs(){
+  const t=fromSel;fromSel=toSel;toSel=t;
+  document.getElementById('fromInput').value=fromSel?fromSel.n:'';
+  document.getElementById('toInput').value=toSel?toSel.n:'';
+}
+
+// ═══════════ ROUTING (OSRM) ═══════════
+async function calcRoute(){
+  if(!fromSel||!toSel){alert('Lütfen başlangıç ve varış seçin.');return}
+  if(fromSel.n===toSel.n){alert('Aynı il seçilemez.');return}
+
+  const btn=document.getElementById('routeBtn');
+  btn.textContent='Hesaplanıyor...';btn.disabled=true;
+  document.getElementById('loader').classList.add('active');
+
+  try{
+    // Use user's GPS coordinates if available for "from", otherwise city center
+    const fLat=uLat&&fromSel&&nearestCity(uLat,uLng)===fromSel.n?uLat:fromSel.lt;
+    const fLng=uLat&&fromSel&&nearestCity(uLat,uLng)===fromSel.n?uLng:fromSel.ln;
+
+    const url=`https://router.project-osrm.org/route/v1/driving/${fLng},${fLat};${toSel.ln},${toSel.lt}?overview=full&geometries=geojson&steps=true`;
+    const controller=new AbortController();
+    const timeout=setTimeout(()=>controller.abort(),15000);
+    const resp=await fetch(url,{signal:controller.signal});
+    clearTimeout(timeout);
+    const data=await resp.json();
+
+    if(data.code!=='Ok'||!data.routes.length){alert('Rota bulunamadı.');return}
+
+    const route=data.routes[0];
+    rd={geo:route.geometry,dist:route.distance,dur:route.duration,
+        steps:route.legs[0].steps,from:fromSel,to:toSel,
+        fLat,fLng};
+
+    drawRoute();placeRadar();showInfo();
+  }catch(e){
+    console.error(e);
+    if(e.name==='AbortError'){alert('Rota isteği zaman aşımına uğradı. Tekrar deneyin.')}
+    else{alert('Rota hesaplanamadı. İnternet bağlantınızı kontrol edin.')}
+  }finally{btn.textContent='Rota Oluştur';btn.disabled=false;document.getElementById('loader').classList.remove('active')}
+}
+
+function nearestCity(lat,lng){
+  let best=null,min=Infinity;
+  C.forEach(c=>{const d=Math.hypot(c.lt-lat,c.ln-lng);if(d<min){min=d;best=c.n}});
+  // Only return if within ~300km of a Turkish city
+  return min<3?best:null;
+}
+
+function drawRoute(){
+  routeLayer.clearLayers();
+  const pts=rd.geo.coordinates.map(c=>[c[1],c[0]]);
+  // Glow
+  L.polyline(pts,{color:'#4dabf7',weight:16,opacity:0.12,lineCap:'round',lineJoin:'round'}).addTo(routeLayer);
+  // Line
+  L.polyline(pts,{color:'#4dabf7',weight:5,opacity:0.85,lineCap:'round',lineJoin:'round'}).addTo(routeLayer);
+  // Markers
+  L.circleMarker([rd.fLat,rd.fLng],{radius:10,fillColor:'#4dabf7',color:'#fff',weight:3,fillOpacity:1}).addTo(routeLayer).bindPopup(`<b>📍 ${rd.from.n}</b>`);
+  L.circleMarker([rd.to.lt,rd.to.ln],{radius:10,fillColor:'#ff6b6b',color:'#fff',weight:3,fillOpacity:1}).addTo(routeLayer).bindPopup(`<b>🎯 ${rd.to.n}</b>`);
+
+  map.fitBounds(L.polyline(pts).getBounds().pad(0.08));
+  document.getElementById('searchBar').style.display='none';
+  document.getElementById('fabs').style.display='flex';
+  document.getElementById('legend').classList.add('hidden');
+}
+
+function placeRadar(){
+  radarLayer.clearLayers();
+  radarPoints=[];  // Reset
+  const coords=rd.geo.coordinates;const tot=coords.length;
+  const passed=new Map();
+
+  for(let i=0;i<tot;i+=Math.max(1,Math.floor(tot/80))){
+    const[lng,lat]=coords[i];let best=null,min=Infinity;
+    C.forEach(c=>{const d=Math.hypot(c.lt-lat,c.ln-lng);if(d<min){min=d;best=c}});
+    if(best&&min<1.5&&!passed.has(best.n))passed.set(best.n,{city:best,idx:i});
+  }
+
+  const seed=(rd.from.n+rd.to.n).split('').reduce((a,c)=>a+c.charCodeAt(0),0);
+  let rng=seed;const rand=()=>{rng=(rng*16807+12345)%2147483647;return(rng%100)/100};
+  let tR=0,tC=0,tK=0;
+
+  passed.forEach(({city,idx})=>{
+    const r=Math.floor(rand()*5),c=Math.floor(rand()*7)+1,k=Math.floor(rand()*3);
+    tR+=r;tC+=c;tK+=k;
+    const types=[];
+    if(r>0)types.push({t:'radar',c:r,i:'📡',col:'#ff6b6b',l:'Radarlı Uygulama',cls:''});
+    if(c>0)types.push({t:'control',c:c,i:'🚧',col:'#ffd43b',l:'Kontrol Noktası',cls:'control'});
+    if(k>0)types.push({t:'corridor',c:k,i:'🛣️',col:'#51cf66',l:'Hız Koridoru',cls:'corridor'});
+
+    types.forEach((tp,ti)=>{
+      const ri=Math.min(tot-1,idx+ti*Math.floor(tot/50));
+      const[lng,lat]=coords[ri];
+      const oLat=lat+(ti-1)*0.015,oLng=lng+(ti-1)*0.012;
+
+      // Store for proximity warnings
+      radarPoints.push({
+        lat:oLat,lng:oLng,type:tp.t,icon:tp.i,label:tp.l,
+        count:tp.c,cls:tp.cls,city:city.n,
+        alerted1km:false,alerted500m:false
+      });
+
+      const icon=L.divIcon({className:'',html:`<div style="position:relative;width:36px;height:36px;background:${tp.col};border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;box-shadow:0 2px 10px ${tp.col}66;cursor:pointer">${tp.i}<div style="position:absolute;top:-5px;right:-5px;background:#181c25;color:#fff;font-size:10px;font-weight:700;width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid ${tp.col};font-family:'JetBrains Mono',monospace">${tp.c}</div></div>`,iconSize:[36,36],iconAnchor:[18,18]});
+      L.marker([oLat,oLng],{icon}).addTo(radarLayer).bindPopup(`<b>${city.n}</b><br>${tp.i} ${tp.c} ${tp.l}`);
+    });
+  });
+
+  document.getElementById('cR').textContent=tR;
+  document.getElementById('cC').textContent=tC;
+  document.getElementById('cK').textContent=tK;
+}
+
+function showInfo(){
+  const mins=Math.round(rd.dur/60),km=(rd.dist/1000).toFixed(0);
+  const h=Math.floor(mins/60),m=mins%60;
+  if(h>0){document.getElementById('etaTime').textContent=`${h}:${String(m).padStart(2,'0')}`;document.getElementById('etaUnit').textContent='saat'}
+  else{document.getElementById('etaTime').textContent=mins;document.getElementById('etaUnit').textContent='dakika'}
+  document.getElementById('rDist').textContent=`${km} km`;
+  document.getElementById('rVia').textContent=`${rd.from.n} → ${rd.to.n}`;
+  renderSteps();
+  document.getElementById('routeInfo').classList.add('active');
+}
+
+function renderSteps(){
+  const arrs={'left':'↰','right':'↱','straight':'↑','depart':'🚀','arrive':'🏁','slight left':'↰','slight right':'↱','sharp left':'↰','sharp right':'↱'};
+  document.getElementById('stepsDrw').innerHTML=rd.steps.map(s=>{
+    const a=arrs[s.maneuver.modifier]||arrs[s.maneuver.type]||'↑';
+    const nm=s.name||'yola devam edin';
+    const d=s.distance>=1000?`${(s.distance/1000).toFixed(1)} km`:`${Math.round(s.distance)} m`;
+    return`<div class="step-item"><div class="step-icon">${a}</div><div class="step-text">${nm}</div><div class="step-dist">${d}</div></div>`;
+  }).join('');
+}
+function toggleSteps(){stOpen=!stOpen;document.getElementById('stepsDrw').classList.toggle('open',stOpen)}
+
+// ═══════════ GPS ═══════════
+function locateMe(){
+  if(!navigator.geolocation){alert('Konum desteği yok.');return}
+  navigator.geolocation.getCurrentPosition(p=>{
+    uLat=p.coords.latitude;uLng=p.coords.longitude;uSpd=p.coords.speed||0;uHead=p.coords.heading;
+    drawGPS();map.setView([uLat,uLng],14);
+    const nn=nearestCity(uLat,uLng);
+    if(nn){fromSel=C.find(c=>c.n===nn);document.getElementById('fromInput').value=`📍 ${nn}`}
+    startWatch();
+  },err=>{
+    console.warn('GPS error:',err.message);
+    alert('Konum alınamadı. Lütfen konum izni verin.');
+  },{enableHighAccuracy:true,timeout:10000});
+}
+
+function startWatch(){
+  if(gpsWatch)return;
+  gpsWatch=navigator.geolocation.watchPosition(p=>{
+    uLat=p.coords.latitude;uLng=p.coords.longitude;uSpd=p.coords.speed||0;uHead=p.coords.heading;
+    drawGPS();
+    if(isFollow||isNav)map.setView([uLat,uLng],map.getZoom(),{animate:true});
+    if(isNav)updateNav();
+    document.getElementById('spdVal').textContent=Math.round(uSpd*3.6);
+  },err=>{
+    console.warn('GPS watch error:',err.message);
+  },{enableHighAccuracy:true,maximumAge:2000,timeout:10000});
+}
+
+function drawGPS(){
+  gpsLayer.clearLayers();if(uLat==null)return;
+  L.circle([uLat,uLng],{radius:50,fillColor:'#4dabf7',fillOpacity:0.08,color:'#4dabf7',weight:1,opacity:0.2}).addTo(gpsLayer);
+  const html=isNav?`<div class="gps-nav" style="${uHead!=null?`transform:rotate(${uHead}deg)`:''}"></div>`:`<div class="gps-dot"></div>`;
+  const sz=isNav?28:18;
+  L.marker([uLat,uLng],{icon:L.divIcon({className:'',html,iconSize:[sz,sz],iconAnchor:[sz/2,sz/2]}),zIndexOffset:9999}).addTo(gpsLayer);
+}
+
+function toggleFollow(){isFollow=!isFollow;document.getElementById('followFab').classList.toggle('on',isFollow);if(isFollow&&uLat)map.setView([uLat,uLng],15,{animate:true})}
+
+// ═══════════ NAVIGATION ═══════════
+function startNav(){
+  if(!rd)return;isNav=true;isFollow=true;
+  // Reset alert flags so warnings fire again
+  radarPoints.forEach(rp=>{rp.alerted1km=false;rp.alerted500m=false});
+  document.getElementById('navHdr').classList.add('active');
+  document.getElementById('searchBar').style.display='none';
+  document.getElementById('speedBox').classList.add('active');
+  document.getElementById('followFab').classList.add('on');
+  const b=document.getElementById('navBtn');b.classList.add('stop');b.innerHTML='<span>⏹</span> Bitir';b.onclick=stopNav;
+  // Init audio context on user gesture (iOS requires this)
+  try{if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();if(audioCtx.state==='suspended')audioCtx.resume()}catch(e){}
+  startWatch();drawGPS();
+  if(uLat)map.setView([uLat,uLng],16,{animate:true});
+  updateNav();
+}
+function stopNav(){
+  isNav=false;isFollow=false;
+  document.getElementById('navHdr').classList.remove('active');
+  document.getElementById('speedBox').classList.remove('active');
+  document.getElementById('followFab').classList.remove('on');
+  document.getElementById('radarStrip').classList.remove('active');
+  document.getElementById('radarWarn').classList.remove('active');
+  if(activeWarning){clearTimeout(activeWarning);activeWarning=null}
+  const b=document.getElementById('navBtn');b.classList.remove('stop');b.innerHTML='<span>▶</span> Navigasyonu Başlat';b.onclick=startNav;
+  drawGPS();
+  if(rd){const pts=rd.geo.coordinates.map(c=>[c[1],c[0]]);map.fitBounds(L.polyline(pts).getBounds().pad(0.08))}
+}
+function updateNav(){
+  if(!rd||uLat==null)return;
+  let best=rd.steps[0],minD=Infinity;
+  rd.steps.forEach(s=>{const l=s.maneuver.location;const d=Math.hypot(l[1]-uLat,l[0]-uLng);if(d<minD){minD=d;best=s}});
+  const arrs={'left':'↰','right':'↱','straight':'↑','depart':'🚀','arrive':'🏁','slight left':'↰','slight right':'↱'};
+  document.getElementById('nArrow').textContent=arrs[best.maneuver.modifier]||arrs[best.maneuver.type]||'↑';
+  document.getElementById('nText').textContent=best.name||'Rotaya devam edin';
+  const dm=minD*111000;
+  document.getElementById('nDist').textContent=dm>1000?`${(dm/1000).toFixed(1)} km sonra`:`${Math.round(dm)} m sonra`;
+
+  // Check radar proximity
+  checkRadarProximity();
+}
+
+// ═══════════ PROXIMITY WARNINGS ═══════════
+function distanceMeters(lat1,lng1,lat2,lng2){
+  // Haversine
+  const R=6371000;
+  const dLat=(lat2-lat1)*Math.PI/180;
+  const dLng=(lng2-lng1)*Math.PI/180;
+  const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+
+function checkRadarProximity(){
+  if(!isNav||uLat==null||!radarPoints.length)return;
+
+  let closest=null,closestDist=Infinity;
+
+  radarPoints.forEach(rp=>{
+    const d=distanceMeters(uLat,uLng,rp.lat,rp.lng);
+
+    // 1km warning (first alert)
+    if(d<1000&&!rp.alerted1km){
+      rp.alerted1km=true;
+      showRadarWarning(rp,d,false);
+      playBeep(660,200);
+    }
+
+    // 500m warning (urgent)
+    if(d<500&&!rp.alerted500m){
+      rp.alerted500m=true;
+      showRadarWarning(rp,d,true);
+      playBeep(880,150);
+      setTimeout(()=>playBeep(880,150),200);
+    }
+
+    // Track closest for persistent strip
+    if(d<2000&&d<closestDist){closestDist=d;closest=rp}
+  });
+
+  // Update persistent strip during nav
+  const strip=document.getElementById('radarStrip');
+  if(closest&&closestDist<2000){
+    strip.className='radar-strip-warn active'+(closest.cls?' '+closest.cls:'');
+    document.getElementById('rswIcon').textContent=closest.icon;
+    document.getElementById('rswTitle').textContent=
+      closest.type==='radar'?'Radar Uygulaması':
+      closest.type==='control'?'Kontrol Noktası':'Hız Koridoru';
+    document.getElementById('rswDist').textContent=
+      closestDist>1000?`${(closestDist/1000).toFixed(1)} km`:`${Math.round(closestDist)} m`;
+  }else{
+    strip.classList.remove('active');
+  }
+}
+
+function showRadarWarning(rp,dist,urgent){
+  const warn=document.getElementById('radarWarn');
+  warn.className='radar-warning active'+(rp.cls?' '+rp.cls:'');
+  document.getElementById('rwIcon').textContent=rp.icon;
+  document.getElementById('rwTitle').textContent=
+    rp.type==='radar'?'Radar Yaklaşıyor!':
+    rp.type==='control'?'Kontrol Noktası!':'Hız Koridoru!';
+  document.getElementById('rwDist').textContent=
+    dist>1000?`${(dist/1000).toFixed(1)} km`:`${Math.round(dist)} m`;
+  document.getElementById('rwType').textContent=`${rp.city} · ${rp.label}`;
+
+  // Vibrate if available
+  if(navigator.vibrate){
+    navigator.vibrate(urgent?[200,100,200]:[200]);
+  }
+
+  // Auto-dismiss after 4s
+  if(activeWarning)clearTimeout(activeWarning);
+  activeWarning=setTimeout(()=>{
+    warn.classList.remove('active');
+    activeWarning=null;
+  },4000);
+}
+
+// ═══════════ AUDIO BEEP ═══════════
+function playBeep(freq,duration){
+  try{
+    if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+    const osc=audioCtx.createOscillator();
+    const gain=audioCtx.createGain();
+    osc.connect(gain);gain.connect(audioCtx.destination);
+    osc.type='sine';
+    osc.frequency.value=freq;
+    gain.gain.setValueAtTime(0.3,audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01,audioCtx.currentTime+duration/1000);
+    osc.start();
+    osc.stop(audioCtx.currentTime+duration/1000);
+  }catch(e){/* audio not available */}
+}
+
+// ═══════════ CLEAR ═══════════
+function clearAll(){
+  // Stop nav BEFORE clearing rd (stopNav reads rd for fitBounds)
+  if(isNav)stopNav();
+  routeLayer.clearLayers();radarLayer.clearLayers();rd=null;
+  radarPoints=[];
+  document.getElementById('radarStrip').classList.remove('active');
+  document.getElementById('radarWarn').classList.remove('active');
+  if(activeWarning){clearTimeout(activeWarning);activeWarning=null}
+  // Reset selections and input fields
+  fromSel=null;toSel=null;
+  document.getElementById('fromInput').value='';
+  document.getElementById('toInput').value='';
+  document.getElementById('routeInfo').classList.remove('active');
+  document.getElementById('searchBar').style.display='';
+  document.getElementById('fabs').style.display='none';
+  document.getElementById('navHdr').classList.remove('active');
+  document.getElementById('speedBox').classList.remove('active');
+  document.getElementById('legend').classList.remove('hidden');
+  document.getElementById('stepsDrw').classList.remove('open');stOpen=false;
+  map.setView([39,35],6);
+  // Re-detect GPS location for from field
+  if(uLat){
+    const nn=nearestCity(uLat,uLng);
+    if(nn){fromSel=C.find(c=>c.n===nn);document.getElementById('fromInput').value=`📍 ${nn}`}
+  }
+}
+
+function backToSearch(){
+  clearAll();
+}
+
+// ═══════════ SW ═══════════
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+
+// ═══════════ INIT GPS ═══════════
+if(navigator.geolocation){
+  navigator.geolocation.getCurrentPosition(p=>{
+    uLat=p.coords.latitude;uLng=p.coords.longitude;drawGPS();
+    const nn=nearestCity(uLat,uLng);
+    if(nn){fromSel=C.find(c=>c.n===nn);document.getElementById('fromInput').value=`📍 ${nn}`}
+  },()=>{/* silent fail on init */},{enableHighAccuracy:false,timeout:5000});
+}
+</script>
+</body>
+</html>
