@@ -366,6 +366,7 @@ html,body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text
   <div class="li"><div class="ld" style="background:var(--corridor)"></div>Hız Koridoru</div>
 </div>
 
+<script src="radar_data.js"></script>
 <script>
 // ═══════════ DATA ═══════════
 const C=[
@@ -508,48 +509,90 @@ function drawRoute(){
 
 function placeRadar(){
   radarLayer.clearLayers();
-  radarPoints=[];  // Reset
-  const coords=rd.geo.coordinates;const tot=coords.length;
-  const passed=new Map();
+  radarPoints=[];
 
-  for(let i=0;i<tot;i+=Math.max(1,Math.floor(tot/80))){
-    const[lng,lat]=coords[i];let best=null,min=Infinity;
-    C.forEach(c=>{const d=Math.hypot(c.lt-lat,c.ln-lng);if(d<min){min=d;best=c}});
-    if(best&&min<1.5&&!passed.has(best.n))passed.set(best.n,{city:best,idx:i});
+  // Check if RADAR_DATA is loaded
+  if(typeof RADAR_DATA==='undefined'||!RADAR_DATA.length){
+    console.warn('No radar data loaded');
+    document.getElementById('cR').textContent='0';
+    document.getElementById('cC').textContent='0';
+    document.getElementById('cK').textContent='0';
+    return;
   }
 
-  const seed=(rd.from.n+rd.to.n).split('').reduce((a,c)=>a+c.charCodeAt(0),0);
-  let rng=seed;const rand=()=>{rng=(rng*16807+12345)%2147483647;return(rng%100)/100};
+  const coords=rd.geo.coordinates;
+  const tot=coords.length;
+  const MAX_DIST_KM=3; // Show radars within 3km of route
+
   let tR=0,tC=0,tK=0;
 
-  passed.forEach(({city,idx})=>{
-    const r=Math.floor(rand()*5),c=Math.floor(rand()*7)+1,k=Math.floor(rand()*3);
-    tR+=r;tC+=c;tK+=k;
-    const types=[];
-    if(r>0)types.push({t:'radar',c:r,i:'📡',col:'#ff6b6b',l:'Radarlı Uygulama',cls:''});
-    if(c>0)types.push({t:'control',c:c,i:'🚧',col:'#ffd43b',l:'Kontrol Noktası',cls:'control'});
-    if(k>0)types.push({t:'corridor',c:k,i:'🛣️',col:'#51cf66',l:'Hız Koridoru',cls:'corridor'});
+  // For each radar in our database, check if it's near the route
+  RADAR_DATA.forEach(cam=>{
+    // Sample route points to check proximity (every ~50th point for performance)
+    let minDist=Infinity;
+    for(let i=0;i<tot;i+=Math.max(1,Math.floor(tot/200))){
+      const[lng,lat]=coords[i];
+      const d=haversineKm(cam.lat,cam.lng,lat,lng);
+      if(d<minDist)minDist=d;
+    }
 
-    types.forEach((tp,ti)=>{
-      const ri=Math.min(tot-1,idx+ti*Math.floor(tot/50));
-      const[lng,lat]=coords[ri];
-      const oLat=lat+(ti-1)*0.015,oLng=lng+(ti-1)*0.012;
+    // Skip if too far from route
+    if(minDist>MAX_DIST_KM)return;
 
-      // Store for proximity warnings
-      radarPoints.push({
-        lat:oLat,lng:oLng,type:tp.t,icon:tp.i,label:tp.l,
-        count:tp.c,cls:tp.cls,city:city.n,
-        alerted1km:false,alerted500m:false
-      });
+    // Determine type, icon, color
+    const t=cam.type||'radar';
+    let icon,col,label,cls;
+    if(t==='corridor'){
+      icon='🛣️';col='#51cf66';label='Hız Koridoru';cls='corridor';tK++;
+    }else if(t==='control'){
+      icon='🚧';col='#ffd43b';label='Kontrol Noktası';cls='control';tC++;
+    }else{
+      icon='📡';col='#ff6b6b';label='Radar';cls='';tR++;
+    }
 
-      const icon=L.divIcon({className:'',html:`<div style="position:relative;width:36px;height:36px;background:${tp.col};border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;box-shadow:0 2px 10px ${tp.col}66;cursor:pointer">${tp.i}<div style="position:absolute;top:-5px;right:-5px;background:#181c25;color:#fff;font-size:10px;font-weight:700;width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid ${tp.col};font-family:'JetBrains Mono',monospace">${tp.c}</div></div>`,iconSize:[36,36],iconAnchor:[18,18]});
-      L.marker([oLat,oLng],{icon}).addTo(radarLayer).bindPopup(`<b>${city.n}</b><br>${tp.i} ${tp.c} ${tp.l}`);
+    // Build popup text
+    const cityName=cam.city||cam.desc||'';
+    const speedTxt=cam.maxspeed?` · ${cam.maxspeed} km/s`:'';
+    const roadTxt=cam.road?`<br>🛣️ ${cam.road}`:'';
+    const descTxt=cam.desc?`<br>📍 ${cam.desc}`:'';
+    const popupHtml=`<b>${cityName}</b>${speedTxt}${roadTxt}${descTxt}<br>${icon} ${label}`;
+
+    // Store for proximity warnings
+    radarPoints.push({
+      lat:cam.lat,lng:cam.lng,type:t,icon,label,
+      count:1,cls,city:cityName,
+      maxspeed:cam.maxspeed,
+      alerted1km:false,alerted500m:false
     });
+
+    // Create marker
+    const speedBadge=cam.maxspeed
+      ?`<div style="position:absolute;top:-5px;right:-5px;background:#181c25;color:#fff;font-size:9px;font-weight:700;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid ${col};font-family:'JetBrains Mono',monospace">${cam.maxspeed}</div>`
+      :``;
+
+    const mIcon=L.divIcon({
+      className:'',
+      html:`<div style="position:relative;width:36px;height:36px;background:${col};border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;box-shadow:0 2px 10px ${col}66;cursor:pointer">${icon}${speedBadge}</div>`,
+      iconSize:[36,36],iconAnchor:[18,18]
+    });
+
+    L.marker([cam.lat,cam.lng],{icon:mIcon})
+      .addTo(radarLayer)
+      .bindPopup(popupHtml);
   });
 
   document.getElementById('cR').textContent=tR;
   document.getElementById('cC').textContent=tC;
   document.getElementById('cK').textContent=tK;
+}
+
+// Haversine distance in km
+function haversineKm(lat1,lon1,lat2,lon2){
+  const R=6371;
+  const dLat=(lat2-lat1)*Math.PI/180;
+  const dLon=(lon2-lon1)*Math.PI/180;
+  const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
 }
 
 function showInfo(){
@@ -655,22 +698,13 @@ function updateNav(){
 }
 
 // ═══════════ PROXIMITY WARNINGS ═══════════
-function distanceMeters(lat1,lng1,lat2,lng2){
-  // Haversine
-  const R=6371000;
-  const dLat=(lat2-lat1)*Math.PI/180;
-  const dLng=(lng2-lng1)*Math.PI/180;
-  const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
-  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
-}
-
 function checkRadarProximity(){
   if(!isNav||uLat==null||!radarPoints.length)return;
 
   let closest=null,closestDist=Infinity;
 
   radarPoints.forEach(rp=>{
-    const d=distanceMeters(uLat,uLng,rp.lat,rp.lng);
+    const d=haversineKm(uLat,uLng,rp.lat,rp.lng)*1000; // meters
 
     // 1km warning (first alert)
     if(d<1000&&!rp.alerted1km){
@@ -715,7 +749,8 @@ function showRadarWarning(rp,dist,urgent){
     rp.type==='control'?'Kontrol Noktası!':'Hız Koridoru!';
   document.getElementById('rwDist').textContent=
     dist>1000?`${(dist/1000).toFixed(1)} km`:`${Math.round(dist)} m`;
-  document.getElementById('rwType').textContent=`${rp.city} · ${rp.label}`;
+  const speedInfo=rp.maxspeed?` · Limit: ${rp.maxspeed} km/s`:'';
+  document.getElementById('rwType').textContent=`${rp.city} · ${rp.label}${speedInfo}`;
 
   // Vibrate if available
   if(navigator.vibrate){

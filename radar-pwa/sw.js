@@ -1,7 +1,8 @@
-const CACHE_NAME = 'radar-harita-v2';
+const CACHE_NAME = 'radar-harita-v3';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
+  '/radar_data.js',
   '/manifest.json',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
