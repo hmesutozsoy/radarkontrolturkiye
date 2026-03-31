@@ -1,4 +1,4 @@
-const CACHE_NAME = 'radar-harita-v3';
+const CACHE_NAME = 'radar-harita-v4';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
@@ -37,8 +37,8 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // OSRM API: always network, never cache (routes must be fresh)
-  if (url.hostname.includes('router.project-osrm.org')) {
+  // OSRM and proxy API: always network, never cache
+  if (url.hostname.includes('router.project-osrm.org') || url.hostname.includes('radar-proxy')) {
     event.respondWith(fetch(event.request));
     return;
   }

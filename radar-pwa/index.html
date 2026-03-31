@@ -410,13 +410,75 @@ const radarLayer=L.layerGroup().addTo(map);
 const gpsLayer=L.layerGroup().addTo(map);
 
 // ═══════════ STATE ═══════════
+const PROXY='https://radar-proxy-gf5n.onrender.com';
 let fromSel=null,toSel=null,rd=null;
+let officialData=null;  // İçişleri API response
+let apiCities=[];       // Cities from İçişleri with IDs
 let isNav=false,isFollow=false,gpsWatch=null;
 let uLat=null,uLng=null,uHead=null,uSpd=0;
 let stOpen=false;
-let radarPoints=[];       // {lat,lng,type,icon,label,count,alerted1km,alerted500m}
-let activeWarning=null;   // timeout handle for auto-dismiss
-let audioCtx=null;        // Web Audio for beep sounds
+let radarPoints=[];
+let activeWarning=null;
+let audioCtx=null;
+
+// ═══════════ İÇİŞLERİ API ═══════════
+async function loadApiCities(){
+  try{
+    const resp=await fetch(`${PROXY}/api/cities`);
+    const data=await resp.json();
+    if(Array.isArray(data)){
+      apiCities=data;
+      console.log(`Loaded ${apiCities.length} cities from İçişleri API`);
+    }
+  }catch(e){console.warn('Could not load İçişleri cities:',e)}
+}
+
+async function loadApiDistricts(cityId){
+  try{
+    const resp=await fetch(`${PROXY}/api/districts?cityId=${cityId}`);
+    return await resp.json();
+  }catch(e){console.warn('Could not load districts:',e);return[]}
+}
+
+async function fetchOfficialRoute(fromLat,fromLng,toLat,toLng,fromDistId,toDistId){
+  try{
+    const resp=await fetch(`${PROXY}/api/route`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        fromLatitude:fromLat,
+        fromLongitude:fromLng,
+        toLatitude:toLat,
+        toLongitude:toLng,
+        fromDistrictId:fromDistId||0,
+        toDistrictId:toDistId||0
+      })
+    });
+    const result=await resp.json();
+    if(result.success&&result.data){
+      officialData=result.data;
+      console.log(`İçişleri: ${officialData.RadarCount} radar, ${officialData.ControlPointCount} kontrol, ${officialData.CorridorCount} koridor`);
+      return officialData;
+    }
+  }catch(e){console.warn('İçişleri API error:',e)}
+  return null;
+}
+
+// Find nearest city/district ID from İçişleri data
+function findNearestApiCity(lat,lng){
+  if(!apiCities.length)return null;
+  let best=null,minD=Infinity;
+  apiCities.forEach(c=>{
+    if(c.Latitude&&c.Longitude){
+      const d=Math.hypot(c.Latitude-lat,c.Longitude-lng);
+      if(d<minD){minD=d;best=c}
+    }
+  });
+  return best;
+}
+
+// Init: load cities on startup
+loadApiCities();
 
 // ═══════════ SEARCH (Nominatim) ═══════════
 let searchFor=null;  // 'from' or 'to'
@@ -572,7 +634,25 @@ async function calcRoute(){
         steps:route.legs[0].steps,from:fromSel,to:toSel,
         fLat,fLng};
 
-    drawRoute();placeRadar();showInfo();
+    drawRoute();showInfo();
+
+    // Fetch official İçişleri radar data in parallel
+    // Find district IDs if available
+    const fromApiCity=findNearestApiCity(fLat,fLng);
+    const toApiCity=findNearestApiCity(toSel.lt,toSel.ln);
+    const fromDistId=fromSel.districtId||0;
+    const toDistId=toSel.districtId||0;
+
+    fetchOfficialRoute(fLat,fLng,toSel.lt,toSel.ln,fromDistId,toDistId)
+      .then(official=>{
+        placeRadar(official);
+        if(official){
+          // Update counts from official data
+          document.getElementById('cR').textContent=official.RadarCount||0;
+          document.getElementById('cC').textContent=official.ControlPointCount||0;
+          document.getElementById('cK').textContent=official.CorridorCount||0;
+        }
+      });
   }catch(e){
     console.error(e);
     if(e.name==='AbortError'){alert('Rota isteği zaman aşımına uğradı. Tekrar deneyin.')}
@@ -604,83 +684,66 @@ function drawRoute(){
   document.getElementById('legend').classList.add('hidden');
 }
 
-function placeRadar(){
+function placeRadar(official){
   radarLayer.clearLayers();
   radarPoints=[];
-
-  // Check if RADAR_DATA is loaded
-  if(typeof RADAR_DATA==='undefined'||!RADAR_DATA.length){
-    console.warn('No radar data loaded');
-    document.getElementById('cR').textContent='0';
-    document.getElementById('cC').textContent='0';
-    document.getElementById('cK').textContent='0';
-    return;
-  }
-
-  const coords=rd.geo.coordinates;
-  const tot=coords.length;
-  const MAX_DIST_KM=3; // Show radars within 3km of route
-
   let tR=0,tC=0,tK=0;
 
-  // For each radar in our database, check if it's near the route
-  RADAR_DATA.forEach(cam=>{
-    // Sample route points to check proximity (every ~50th point for performance)
-    let minDist=Infinity;
-    for(let i=0;i<tot;i+=Math.max(1,Math.floor(tot/200))){
-      const[lng,lat]=coords[i];
-      const d=haversineKm(cam.lat,cam.lng,lat,lng);
-      if(d<minDist)minDist=d;
-    }
-
-    // Skip if too far from route
-    if(minDist>MAX_DIST_KM)return;
-
-    // Determine type, icon, color
-    const t=cam.type||'radar';
-    let icon,col,label,cls;
-    if(t==='corridor'){
-      icon='🛣️';col='#51cf66';label='Hız Koridoru';cls='corridor';tK++;
-    }else if(t==='control'){
-      icon='🚧';col='#ffd43b';label='Kontrol Noktası';cls='control';tC++;
-    }else{
-      icon='📡';col='#ff6b6b';label='Radar';cls='';tR++;
-    }
-
-    // Build popup text (handle both starter format and OSM format)
-    const cityName=cam.city||cam.desc||cam.description||'';
-    const speedTxt=cam.maxspeed?` · ${cam.maxspeed} km/s`:'';
-    const roadTxt=cam.road?`<br>🛣️ ${cam.road}`:(cam.ref?`<br>🛣️ ${cam.ref}`:'');
-    const descTxt=(cam.desc||cam.description)?`<br>📍 ${cam.desc||cam.description}`:'';
-    const popupHtml=`<b>${cityName}</b>${speedTxt}${roadTxt}${descTxt}<br>${icon} ${label}`;
-
-    // Store for proximity warnings
-    radarPoints.push({
-      lat:cam.lat,lng:cam.lng,type:t,icon,label,
-      count:1,cls,city:cityName,
-      maxspeed:cam.maxspeed,
-      alerted1km:false,alerted500m:false
+  // ── OFFICIAL İÇİŞLERİ DATA ──
+  if(official){
+    (official.SpeedTunnels||[]).forEach(tn=>{
+      const lat=tn.startLatY||(tn.coordinates&&tn.coordinates[0]?tn.coordinates[0].y:null);
+      const lng=tn.startLonX||(tn.coordinates&&tn.coordinates[0]?tn.coordinates[0].x:null);
+      if(!lat||!lng)return;
+      const spd=tn.speedLimit||'?';
+      const prov=(tn.provinceName||'').trim();
+      const dist=(tn.districtName||'').trim();
+      const name=tn.name||'Hız Koridoru';
+      radarPoints.push({lat,lng,type:'corridor',icon:'🛣️',label:'Hız Koridoru',count:1,cls:'corridor',city:`${prov} ${dist}`.trim(),maxspeed:tn.speedLimit,alerted1km:false,alerted500m:false});
+      if(tn.coordinates&&tn.coordinates.length>1)
+        L.polyline(tn.coordinates.map(c=>[c.y,c.x]),{color:'#51cf66',weight:6,opacity:0.5,dashArray:'8,6'}).addTo(radarLayer);
+      addMapMarker(lat,lng,'🛣️','#51cf66',spd,`<b>🛣️ Hız Koridoru</b><br>📍 ${name}<br>🏙️ ${prov} ${dist}<br>⚡ ${spd} km/s`);
+      if(tn.endLatY&&tn.endLonX)
+        radarPoints.push({lat:tn.endLatY,lng:tn.endLonX,type:'corridor',icon:'🛣️',label:'Hız Koridoru',count:1,cls:'corridor',city:prov,maxspeed:tn.speedLimit,alerted1km:false,alerted500m:false});
     });
-
-    // Create marker
-    const speedBadge=cam.maxspeed
-      ?`<div style="position:absolute;top:-5px;right:-5px;background:#181c25;color:#fff;font-size:9px;font-weight:700;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid ${col};font-family:'JetBrains Mono',monospace">${cam.maxspeed}</div>`
-      :``;
-
-    const mIcon=L.divIcon({
-      className:'',
-      html:`<div style="position:relative;width:36px;height:36px;background:${col};border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;box-shadow:0 2px 10px ${col}66;cursor:pointer">${icon}${speedBadge}</div>`,
-      iconSize:[36,36],iconAnchor:[18,18]
+    (official.Radars||[]).forEach(r=>{
+      const lat=r.latitude||r.startLatY;const lng=r.longitude||r.startLonX;
+      if(!lat||!lng)return;
+      const spd=r.speedLimit||'?';const prov=(r.provinceName||'').trim();
+      radarPoints.push({lat,lng,type:'radar',icon:'📡',label:'Radar',count:1,cls:'',city:prov,maxspeed:r.speedLimit,alerted1km:false,alerted500m:false});
+      addMapMarker(lat,lng,'📡','#ff6b6b',spd,`<b>📡 Radar</b><br>🏙️ ${prov}<br>⚡ ${spd} km/s`);
     });
+    tR=official.RadarCount||0;tC=official.ControlPointCount||0;tK=official.CorridorCount||0;
+  }
 
-    L.marker([cam.lat,cam.lng],{icon:mIcon})
-      .addTo(radarLayer)
-      .bindPopup(popupHtml);
-  });
-
+  // ── OSM FIXED CAMERAS (supplement) ──
+  if(rd&&typeof RADAR_DATA!=='undefined'&&RADAR_DATA.length){
+    const coords=rd.geo.coordinates;const tot=coords.length;
+    RADAR_DATA.forEach(cam=>{
+      let minD=Infinity;
+      for(let i=0;i<tot;i+=Math.max(1,Math.floor(tot/200))){
+        const[lng,lat]=coords[i];minD=Math.min(minD,haversineKm(cam.lat,cam.lng,lat,lng));
+      }
+      if(minD>3)return;
+      const t=cam.type||'radar';
+      let icon,col,label,cls;
+      if(t==='corridor'){icon='🛣️';col='#51cf66';label='Hız Koridoru';cls='corridor'}
+      else if(t==='control'){icon='🚧';col='#ffd43b';label='Kontrol Noktası';cls='control'}
+      else{icon='📡';col='#ff6b6b';label='Sabit Kamera';cls=''}
+      if(!official){if(t==='corridor')tK++;else if(t==='control')tC++;else tR++}
+      const city=cam.city||cam.desc||cam.description||'';
+      radarPoints.push({lat:cam.lat,lng:cam.lng,type:t,icon,label,count:1,cls,city,maxspeed:cam.maxspeed,alerted1km:false,alerted500m:false});
+      addMapMarker(cam.lat,cam.lng,icon,col,cam.maxspeed,`<b>${city}</b>${cam.maxspeed?' · '+cam.maxspeed+' km/s':''}<br>${icon} ${label}`);
+    });
+  }
   document.getElementById('cR').textContent=tR;
   document.getElementById('cC').textContent=tC;
   document.getElementById('cK').textContent=tK;
+}
+
+function addMapMarker(lat,lng,icon,col,speed,popup){
+  const badge=speed?`<div style="position:absolute;top:-5px;right:-5px;background:#181c25;color:#fff;font-size:9px;font-weight:700;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid ${col};font-family:'JetBrains Mono',monospace">${speed}</div>`:'';
+  L.marker([lat,lng],{icon:L.divIcon({className:'',html:`<div style="position:relative;width:36px;height:36px;background:${col};border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;box-shadow:0 2px 10px ${col}66;cursor:pointer">${icon}${badge}</div>`,iconSize:[36,36],iconAnchor:[18,18]})}).addTo(radarLayer).bindPopup(popup);
 }
 
 // Haversine distance in km
@@ -883,7 +946,7 @@ function playBeep(freq,duration){
 function clearAll(){
   // Stop nav BEFORE clearing rd (stopNav reads rd for fitBounds)
   if(isNav)stopNav();
-  routeLayer.clearLayers();radarLayer.clearLayers();rd=null;
+  routeLayer.clearLayers();radarLayer.clearLayers();rd=null;officialData=null;
   radarPoints=[];
   document.getElementById('radarStrip').classList.remove('active');
   document.getElementById('radarWarn').classList.remove('active');
