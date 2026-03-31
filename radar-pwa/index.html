@@ -286,8 +286,8 @@ html,body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text
       <div class="sdot to"></div>
     </div>
     <div style="flex:1;display:flex;flex-direction:column;gap:8px">
-      <input class="search-input" id="fromInput" placeholder="Konumunuz" readonly onclick="openPicker('from')">
-      <input class="search-input" id="toInput" placeholder="Nereye gideceksiniz?" readonly onclick="openPicker('to')">
+      <input class="search-input" id="fromInput" placeholder="📍 Konum alınıyor..." readonly onclick="openSearch('from')">
+      <input class="search-input" id="toInput" placeholder="Nereye gideceksiniz?" readonly onclick="openSearch('to')">
     </div>
     <button class="btn-icon" onclick="swapInputs()">⇅</button>
   </div>
@@ -298,13 +298,14 @@ html,body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text
   </div>
 </div>
 
-<!-- ═══ CITY PICKER ═══ -->
+<!-- ═══ SEARCH OVERLAY ═══ -->
 <div class="picker-overlay" id="picker">
   <div class="picker-header">
-    <button class="btn-icon" onclick="closePicker()" style="font-size:22px">←</button>
-    <input class="picker-input" id="pickerQ" placeholder="İl ara..." oninput="filterList(this.value)">
+    <button class="btn-icon" onclick="closeSearch()" style="font-size:22px">←</button>
+    <input class="picker-input" id="pickerQ" placeholder="Adres, sokak, şehir ara..." oninput="onSearchInput(this.value)">
   </div>
   <div class="picker-quick" id="quickChips"></div>
+  <div id="searchStatus" style="padding:8px 20px;font-size:12px;color:var(--muted);display:none"></div>
   <div class="picker-list" id="pickerList"></div>
 </div>
 
@@ -409,7 +410,7 @@ const radarLayer=L.layerGroup().addTo(map);
 const gpsLayer=L.layerGroup().addTo(map);
 
 // ═══════════ STATE ═══════════
-let fromSel=null,toSel=null,pickFor=null,rd=null;
+let fromSel=null,toSel=null,rd=null;
 let isNav=false,isFollow=false,gpsWatch=null;
 let uLat=null,uLng=null,uHead=null,uSpd=0;
 let stOpen=false;
@@ -417,30 +418,121 @@ let radarPoints=[];       // {lat,lng,type,icon,label,count,alerted1km,alerted50
 let activeWarning=null;   // timeout handle for auto-dismiss
 let audioCtx=null;        // Web Audio for beep sounds
 
-// ═══════════ PICKER ═══════════
-function openPicker(t){
-  pickFor=t;
+// ═══════════ SEARCH (Nominatim) ═══════════
+let searchFor=null;  // 'from' or 'to'
+let searchTimer=null;
+const NOMINATIM='https://nominatim.openstreetmap.org/search';
+
+function openSearch(target){
+  searchFor=target;
   document.getElementById('picker').classList.add('active');
-  const q=document.getElementById('pickerQ');q.value='';
+  const q=document.getElementById('pickerQ');
+  q.value='';
+  q.placeholder=target==='from'?'Başlangıç adresi ara...':'Varış adresi ara...';
   setTimeout(()=>q.focus(),100);
-  renderList(C);
-  document.getElementById('quickChips').innerHTML=POP.map(n=>
-    `<div class="quick-chip" onclick="pickCity('${n}')">${n}</div>`
+
+  // Show quick options
+  const quickHtml=target==='from'
+    ?`<div class="quick-chip" onclick="useMyLocation()">📍 Konumumu Kullan</div>`+
+      POP.map(n=>`<div class="quick-chip" onclick="pickQuickCity('${n}')">${n}</div>`).join('')
+    :POP.map(n=>`<div class="quick-chip" onclick="pickQuickCity('${n}')">${n}</div>`).join('');
+  document.getElementById('quickChips').innerHTML=quickHtml;
+
+  // Show city list as default
+  renderCityList();
+  document.getElementById('searchStatus').style.display='none';
+}
+
+function closeSearch(){document.getElementById('picker').classList.remove('active')}
+
+function renderCityList(){
+  document.getElementById('pickerList').innerHTML=C.map(c=>
+    `<div class="picker-item" onclick="pickPlace('${c.n}',${c.lt},${c.ln})">${c.n}</div>`
   ).join('');
 }
-function closePicker(){document.getElementById('picker').classList.remove('active')}
-function renderList(arr){
-  document.getElementById('pickerList').innerHTML=arr.map(c=>
-    `<div class="picker-item" onclick="pickCity('${c.n}')">${c.n}</div>`
-  ).join('');
+
+function onSearchInput(q){
+  // Clear previous timer
+  if(searchTimer)clearTimeout(searchTimer);
+
+  if(!q||q.length<2){
+    // Show city list for short queries, filter locally
+    const filtered=C.filter(c=>c.n.toLowerCase().includes(q.toLowerCase()));
+    document.getElementById('pickerList').innerHTML=filtered.map(c=>
+      `<div class="picker-item" onclick="pickPlace('${c.n}',${c.lt},${c.ln})">${c.n}</div>`
+    ).join('');
+    document.getElementById('searchStatus').style.display='none';
+    return;
+  }
+
+  // Debounce 400ms then search Nominatim
+  document.getElementById('searchStatus').textContent='Aranıyor...';
+  document.getElementById('searchStatus').style.display='block';
+
+  searchTimer=setTimeout(()=>searchNominatim(q),400);
 }
-function filterList(q){renderList(C.filter(c=>c.n.toLowerCase().includes(q.toLowerCase())))}
-function pickCity(n){
-  const city=C.find(c=>c.n===n);if(!city)return;
-  if(pickFor==='from'){fromSel=city;document.getElementById('fromInput').value=city.n}
-  else{toSel=city;document.getElementById('toInput').value=city.n}
-  closePicker();
+
+async function searchNominatim(q){
+  try{
+    const url=`${NOMINATIM}?format=json&q=${encodeURIComponent(q)}&countrycodes=tr&limit=8&addressdetails=1&accept-language=tr`;
+    const resp=await fetch(url);
+    const results=await resp.json();
+
+    if(!results.length){
+      document.getElementById('searchStatus').textContent='Sonuç bulunamadı';
+      document.getElementById('pickerList').innerHTML='';
+      return;
+    }
+
+    document.getElementById('searchStatus').style.display='none';
+    document.getElementById('pickerList').innerHTML=results.map(r=>{
+      const name=r.display_name.split(',').slice(0,3).join(', ');
+      const type=r.type||'';
+      const icon=type.includes('motorway')||type.includes('road')?'🛣️':
+                  type.includes('city')||type.includes('town')?'🏙️':
+                  type.includes('village')?'🏘️':'📍';
+      // Escape quotes in name for onclick
+      const safeName=name.replace(/'/g,"\\'").replace(/"/g,'&quot;');
+      return`<div class="picker-item" onclick="pickPlace('${safeName}',${r.lat},${r.lon})">
+        <span style="margin-right:8px">${icon}</span>
+        <span>${name}</span>
+      </div>`;
+    }).join('');
+  }catch(e){
+    document.getElementById('searchStatus').textContent='Arama hatası, tekrar deneyin';
+    console.error(e);
+  }
 }
+
+function useMyLocation(){
+  if(uLat){
+    fromSel={n:'📍 Konumunuz',lt:uLat,ln:uLng,isGPS:true};
+    document.getElementById('fromInput').value='📍 Konumunuz';
+    closeSearch();
+  }else{
+    locateMe();
+    closeSearch();
+  }
+}
+
+function pickPlace(name,lat,lng){
+  lat=parseFloat(lat);lng=parseFloat(lng);
+  const sel={n:name,lt:lat,ln:lng};
+  if(searchFor==='from'){
+    fromSel=sel;
+    document.getElementById('fromInput').value=name;
+  }else{
+    toSel=sel;
+    document.getElementById('toInput').value=name;
+  }
+  closeSearch();
+}
+
+function pickQuickCity(name){
+  const city=C.find(c=>c.n===name);
+  if(city)pickPlace(city.n,city.lt,city.ln);
+}
+
 function swapInputs(){
   const t=fromSel;fromSel=toSel;toSel=t;
   document.getElementById('fromInput').value=fromSel?fromSel.n:'';
@@ -449,17 +541,22 @@ function swapInputs(){
 
 // ═══════════ ROUTING (OSRM) ═══════════
 async function calcRoute(){
-  if(!fromSel||!toSel){alert('Lütfen başlangıç ve varış seçin.');return}
-  if(fromSel.n===toSel.n){alert('Aynı il seçilemez.');return}
+  // If no from selected but we have GPS, use that
+  if(!fromSel&&uLat){
+    fromSel={n:'📍 Konumunuz',lt:uLat,ln:uLng,isGPS:true};
+    document.getElementById('fromInput').value='📍 Konumunuz';
+  }
+
+  if(!fromSel||!toSel){alert('Lütfen varış noktası seçin.');return}
 
   const btn=document.getElementById('routeBtn');
   btn.textContent='Hesaplanıyor...';btn.disabled=true;
   document.getElementById('loader').classList.add('active');
 
   try{
-    // Use user's GPS coordinates if available for "from", otherwise city center
-    const fLat=uLat&&fromSel&&nearestCity(uLat,uLng)===fromSel.n?uLat:fromSel.lt;
-    const fLng=uLat&&fromSel&&nearestCity(uLat,uLng)===fromSel.n?uLng:fromSel.ln;
+    // Use actual GPS if fromSel is GPS-based and we have fresh coordinates
+    const fLat=fromSel.isGPS&&uLat?uLat:fromSel.lt;
+    const fLng=fromSel.isGPS&&uLng?uLng:fromSel.ln;
 
     const url=`https://router.project-osrm.org/route/v1/driving/${fLng},${fLat};${toSel.ln},${toSel.lt}?overview=full&geometries=geojson&steps=true`;
     const controller=new AbortController();
@@ -550,11 +647,11 @@ function placeRadar(){
       icon='📡';col='#ff6b6b';label='Radar';cls='';tR++;
     }
 
-    // Build popup text
-    const cityName=cam.city||cam.desc||'';
+    // Build popup text (handle both starter format and OSM format)
+    const cityName=cam.city||cam.desc||cam.description||'';
     const speedTxt=cam.maxspeed?` · ${cam.maxspeed} km/s`:'';
-    const roadTxt=cam.road?`<br>🛣️ ${cam.road}`:'';
-    const descTxt=cam.desc?`<br>📍 ${cam.desc}`:'';
+    const roadTxt=cam.road?`<br>🛣️ ${cam.road}`:(cam.ref?`<br>🛣️ ${cam.ref}`:'');
+    const descTxt=(cam.desc||cam.description)?`<br>📍 ${cam.desc||cam.description}`:'';
     const popupHtml=`<b>${cityName}</b>${speedTxt}${roadTxt}${descTxt}<br>${icon} ${label}`;
 
     // Store for proximity warnings
@@ -623,8 +720,9 @@ function locateMe(){
   navigator.geolocation.getCurrentPosition(p=>{
     uLat=p.coords.latitude;uLng=p.coords.longitude;uSpd=p.coords.speed||0;uHead=p.coords.heading;
     drawGPS();map.setView([uLat,uLng],14);
-    const nn=nearestCity(uLat,uLng);
-    if(nn){fromSel=C.find(c=>c.n===nn);document.getElementById('fromInput').value=`📍 ${nn}`}
+    // Always set as starting point with GPS flag
+    fromSel={n:'📍 Konumunuz',lt:uLat,ln:uLng,isGPS:true};
+    document.getElementById('fromInput').value='📍 Konumunuz';
     startWatch();
   },err=>{
     console.warn('GPS error:',err.message);
@@ -804,8 +902,8 @@ function clearAll(){
   map.setView([39,35],6);
   // Re-detect GPS location for from field
   if(uLat){
-    const nn=nearestCity(uLat,uLng);
-    if(nn){fromSel=C.find(c=>c.n===nn);document.getElementById('fromInput').value=`📍 ${nn}`}
+    fromSel={n:'📍 Konumunuz',lt:uLat,ln:uLng,isGPS:true};
+    document.getElementById('fromInput').value='📍 Konumunuz';
   }
 }
 
@@ -820,9 +918,11 @@ if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(
 if(navigator.geolocation){
   navigator.geolocation.getCurrentPosition(p=>{
     uLat=p.coords.latitude;uLng=p.coords.longitude;drawGPS();
-    const nn=nearestCity(uLat,uLng);
-    if(nn){fromSel=C.find(c=>c.n===nn);document.getElementById('fromInput').value=`📍 ${nn}`}
-  },()=>{/* silent fail on init */},{enableHighAccuracy:false,timeout:5000});
+    fromSel={n:'📍 Konumunuz',lt:uLat,ln:uLng,isGPS:true};
+    document.getElementById('fromInput').value='📍 Konumunuz';
+  },()=>{
+    document.getElementById('fromInput').placeholder='Başlangıç noktası seçin';
+  },{enableHighAccuracy:false,timeout:5000});
 }
 </script>
 </body>
