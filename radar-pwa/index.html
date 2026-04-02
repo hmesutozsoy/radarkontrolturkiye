@@ -128,6 +128,15 @@ html,body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text
 .radar-chip.r .num{color:var(--radar)}
 .radar-chip.c .num{color:var(--control)}
 .radar-chip.k .num{color:var(--corridor)}
+.chip-label{display:block;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:0.3px;margin-top:1px}
+.radar-chip.info{flex:0;padding:12px 14px;cursor:pointer;opacity:0.6}
+.radar-chip.info:hover{opacity:1}
+.info-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:900;justify-content:center;align-items:center}
+.info-modal.active{display:flex}
+.info-modal-content{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:20px;max-width:340px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.4)}
+.info-modal-header{font-weight:700;font-size:16px;margin-bottom:16px;color:var(--text)}
+.info-row{display:flex;gap:12px;align-items:flex-start;margin-bottom:14px;font-size:13px;color:var(--text);line-height:1.5}
+.info-dot{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
 
 .steps-drawer{max-height:0;overflow:hidden;transition:max-height 0.3s ease;border-top:1px solid var(--border);scrollbar-width:thin;scrollbar-color:var(--border) transparent}
 .steps-drawer::-webkit-scrollbar{width:4px}
@@ -341,9 +350,21 @@ html,body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text
       </div>
     </div>
     <div class="radar-strip">
-      <div class="radar-chip r"><span>📡</span><span class="num" id="cR">0</span></div>
-      <div class="radar-chip c"><span>🚧</span><span class="num" id="cC">0</span></div>
-      <div class="radar-chip k"><span>🛣️</span><span class="num" id="cK">0</span></div>
+      <div class="radar-chip r"><span>📡</span><span class="num" id="cR">0</span><span class="chip-label">Radar</span></div>
+      <div class="radar-chip c"><span>🚧</span><span class="num" id="cC">0</span><span class="chip-label">Kontrol</span></div>
+      <div class="radar-chip k"><span>🛣️</span><span class="num" id="cK">0</span><span class="chip-label">Koridor</span></div>
+      <div class="radar-chip info" onclick="showInfoModal()"><span>ℹ️</span></div>
+    </div>
+
+    <!-- Info Modal -->
+    <div class="info-modal" id="infoModal" onclick="this.classList.remove('active')">
+      <div class="info-modal-content" onclick="event.stopPropagation()">
+        <div class="info-modal-header">Simgeler<span onclick="document.getElementById('infoModal').classList.remove('active')" style="cursor:pointer;float:right">✕</span></div>
+        <div class="info-row"><span class="info-dot" style="background:#ff6b6b">📡</span><div><b>Radar</b><br>Sabit hız radarları. Hız limitini aştığınızda fotoğrafınız çekilir.</div></div>
+        <div class="info-row"><span class="info-dot" style="background:#ffd43b">🚧</span><div><b>Kontrol Noktası</b><br>Polis kontrol noktaları (kimlik, ehliyet, alkol kontrolü). Günlük değiştiği için haritada gösterilmez, sadece sayısı verilir.</div></div>
+        <div class="info-row"><span class="info-dot" style="background:#51cf66">🛣️</span><div><b>Hız Koridoru</b><br>İki nokta arasında ortalama hızınız ölçülür. Limit üzerindeyseniz ceza kesilir.</div></div>
+        <div style="margin-top:12px;font-size:11px;color:var(--muted)">Veriler: T.C. İçişleri Bakanlığı + OpenStreetMap</div>
+      </div>
     </div>
     <div class="steps-drawer" id="stepsDrw"></div>
     <div class="route-actions">
@@ -835,6 +856,7 @@ function renderSteps(){
   }).join('');
 }
 function toggleSteps(){stOpen=!stOpen;document.getElementById('stepsDrw').classList.toggle('open',stOpen)}
+function showInfoModal(){document.getElementById('infoModal').classList.add('active')}
 
 // ═══════════ GPS ═══════════
 function locateMe(){
