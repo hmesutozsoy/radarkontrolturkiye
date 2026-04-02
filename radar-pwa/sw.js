@@ -1,4 +1,4 @@
-const CACHE_NAME = 'radar-harita-v4';
+const CACHE_NAME = 'radar-harita-v5';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',

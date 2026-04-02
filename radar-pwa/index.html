@@ -108,6 +108,11 @@ html,body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text
   box-shadow:0 -4px 24px rgba(0,0,0,0.4);overflow:hidden;display:none;
 }
 .route-info.active{display:block}
+.route-tabs{display:flex;gap:0;border-bottom:1px solid var(--border);overflow-x:auto}
+.route-tab{flex:1;padding:10px 8px;text-align:center;font-size:12px;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:all 0.2s;min-width:0}
+.route-tab.active{color:var(--accent);border-bottom-color:var(--accent);background:rgba(77,171,247,0.08)}
+.route-tab .tab-label{font-weight:700;font-size:13px}
+.route-tab .tab-detail{font-size:10px;opacity:0.7;margin-top:2px}
 .route-summary{display:flex;align-items:center;padding:16px 20px;gap:16px}
 .route-eta{text-align:center}
 .route-eta .time{font-family:'JetBrains Mono',monospace;font-size:28px;font-weight:700;color:var(--accent);line-height:1}
@@ -323,6 +328,7 @@ html,body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text
 <!-- ═══ BOTTOM ═══ -->
 <div class="bottom-panel">
   <div class="route-info" id="routeInfo">
+    <div class="route-tabs" id="routeTabs"></div>
     <div class="route-summary">
       <div class="route-eta">
         <div class="time" id="etaTime">--</div>
@@ -412,8 +418,10 @@ const gpsLayer=L.layerGroup().addTo(map);
 // ═══════════ STATE ═══════════
 const PROXY='https://radar-proxy.skytechnicltd.workers.dev';
 let fromSel=null,toSel=null,rd=null;
-let officialData=null;  // İçişleri API response
-let apiCities=[];       // Cities from İçişleri with IDs
+let allRoutes=[];         // All OSRM routes
+let selectedRouteIdx=0;   // Currently selected route index
+let officialData=null;
+let apiCities=[];
 let isNav=false,isFollow=false,gpsWatch=null;
 let uLat=null,uLng=null,uHead=null,uSpd=0;
 let stOpen=false;
@@ -620,7 +628,7 @@ async function calcRoute(){
     const fLat=fromSel.isGPS&&uLat?uLat:fromSel.lt;
     const fLng=fromSel.isGPS&&uLng?uLng:fromSel.ln;
 
-    const url=`https://router.project-osrm.org/route/v1/driving/${fLng},${fLat};${toSel.ln},${toSel.lt}?overview=full&geometries=geojson&steps=true`;
+    const url=`https://router.project-osrm.org/route/v1/driving/${fLng},${fLat};${toSel.ln},${toSel.lt}?overview=full&geometries=geojson&steps=true&alternatives=true`;
     const controller=new AbortController();
     const timeout=setTimeout(()=>controller.abort(),15000);
     const resp=await fetch(url,{signal:controller.signal});
@@ -629,30 +637,21 @@ async function calcRoute(){
 
     if(data.code!=='Ok'||!data.routes.length){alert('Rota bulunamadı.');return}
 
-    const route=data.routes[0];
-    rd={geo:route.geometry,dist:route.distance,dur:route.duration,
-        steps:route.legs[0].steps,from:fromSel,to:toSel,
-        fLat,fLng};
+    // Store all routes
+    allRoutes=data.routes.map((route,i)=>({
+      geo:route.geometry,dist:route.distance,dur:route.duration,
+      steps:route.legs[0].steps,from:fromSel,to:toSel,
+      fLat,fLng,index:i
+    }));
 
-    drawRoute();showInfo();
+    // Select first route
+    selectedRouteIdx=0;
+    rd=allRoutes[0];
 
-    // Fetch official İçişleri radar data in parallel
-    // Find district IDs if available
-    const fromApiCity=findNearestApiCity(fLat,fLng);
-    const toApiCity=findNearestApiCity(toSel.lt,toSel.ln);
-    const fromDistId=fromSel.districtId||0;
-    const toDistId=toSel.districtId||0;
+    drawAllRoutes();showRouteTabs();showInfo();
 
-    fetchOfficialRoute(fLat,fLng,toSel.lt,toSel.ln,fromDistId,toDistId)
-      .then(official=>{
-        placeRadar(official);
-        if(official){
-          // Update counts from official data
-          document.getElementById('cR').textContent=official.RadarCount||0;
-          document.getElementById('cC').textContent=official.ControlPointCount||0;
-          document.getElementById('cK').textContent=official.CorridorCount||0;
-        }
-      });
+    // Fetch official İçişleri radar data
+    fetchRadarForCurrentRoute();
   }catch(e){
     console.error(e);
     if(e.name==='AbortError'){alert('Rota isteği zaman aşımına uğradı. Tekrar deneyin.')}
@@ -667,14 +666,25 @@ function nearestCity(lat,lng){
   return min<3?best:null;
 }
 
-function drawRoute(){
+function drawAllRoutes(){
   routeLayer.clearLayers();
+
+  // Draw alternative routes first (dimmed)
+  allRoutes.forEach((r,i)=>{
+    if(i===selectedRouteIdx)return;
+    const pts=r.geo.coordinates.map(c=>[c[1],c[0]]);
+    const line=L.polyline(pts,{color:'#7a8399',weight:4,opacity:0.35,lineCap:'round',lineJoin:'round',dashArray:'8,6'});
+    line._routeIdx=i;
+    line.on('click',()=>selectRoute(i));
+    line.addTo(routeLayer);
+  });
+
+  // Draw selected route on top (bright)
   const pts=rd.geo.coordinates.map(c=>[c[1],c[0]]);
-  // Glow
   L.polyline(pts,{color:'#4dabf7',weight:16,opacity:0.12,lineCap:'round',lineJoin:'round'}).addTo(routeLayer);
-  // Line
   L.polyline(pts,{color:'#4dabf7',weight:5,opacity:0.85,lineCap:'round',lineJoin:'round'}).addTo(routeLayer);
-  // Markers
+
+  // Start/end markers
   L.circleMarker([rd.fLat,rd.fLng],{radius:10,fillColor:'#4dabf7',color:'#fff',weight:3,fillOpacity:1}).addTo(routeLayer).bindPopup(`<b>📍 ${rd.from.n}</b>`);
   L.circleMarker([rd.to.lt,rd.to.ln],{radius:10,fillColor:'#ff6b6b',color:'#fff',weight:3,fillOpacity:1}).addTo(routeLayer).bindPopup(`<b>🎯 ${rd.to.n}</b>`);
 
@@ -682,6 +692,55 @@ function drawRoute(){
   document.getElementById('searchBar').style.display='none';
   document.getElementById('fabs').style.display='flex';
   document.getElementById('legend').classList.add('hidden');
+}
+
+function showRouteTabs(){
+  const tabs=document.getElementById('routeTabs');
+  if(allRoutes.length<=1){tabs.style.display='none';return}
+  tabs.style.display='flex';
+  tabs.innerHTML=allRoutes.map((r,i)=>{
+    const mins=Math.round(r.dur/60);
+    const km=(r.dist/1000).toFixed(0);
+    const h=Math.floor(mins/60),m=mins%60;
+    const timeStr=h>0?`${h} sa ${m} dk`:`${mins} dk`;
+    const diff=i===0?'':(r.dur>allRoutes[0].dur?` (+${Math.round((r.dur-allRoutes[0].dur)/60)} dk)`:'');
+    return`<div class="route-tab${i===selectedRouteIdx?' active':''}" onclick="selectRoute(${i})">
+      <div class="tab-label">Rota ${i+1}</div>
+      <div class="tab-detail">${timeStr} · ${km} km${diff}</div>
+    </div>`;
+  }).join('');
+}
+
+function selectRoute(idx){
+  if(idx===selectedRouteIdx)return;
+  selectedRouteIdx=idx;
+  rd=allRoutes[idx];
+
+  // Redraw routes
+  drawAllRoutes();
+  showRouteTabs();
+  showInfo();
+
+  // Re-fetch government radar data for this route
+  document.getElementById('cR').textContent='...';
+  document.getElementById('cC').textContent='...';
+  document.getElementById('cK').textContent='...';
+  fetchRadarForCurrentRoute();
+}
+
+function fetchRadarForCurrentRoute(){
+  const fromDistId=fromSel.districtId||0;
+  const toDistId=toSel.districtId||0;
+
+  fetchOfficialRoute(rd.fLat,rd.fLng,rd.to.lt,rd.to.ln,fromDistId,toDistId)
+    .then(official=>{
+      placeRadar(official);
+      if(official){
+        document.getElementById('cR').textContent=official.RadarCount||0;
+        document.getElementById('cC').textContent=official.ControlPointCount||0;
+        document.getElementById('cK').textContent=official.CorridorCount||0;
+      }
+    });
 }
 
 function placeRadar(official){
@@ -947,6 +1006,7 @@ function clearAll(){
   // Stop nav BEFORE clearing rd (stopNav reads rd for fitBounds)
   if(isNav)stopNav();
   routeLayer.clearLayers();radarLayer.clearLayers();rd=null;officialData=null;
+  allRoutes=[];selectedRouteIdx=0;
   radarPoints=[];
   document.getElementById('radarStrip').classList.remove('active');
   document.getElementById('radarWarn').classList.remove('active');
