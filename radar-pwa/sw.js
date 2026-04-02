@@ -38,7 +38,7 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
   // OSRM and proxy API: always network, never cache
-  if (url.hostname.includes('router.project-osrm.org') || url.hostname.includes('radar-proxy')) {
+  if (url.hostname.includes('router.project-osrm.org') || url.hostname.includes('radar-proxy') || url.pathname.startsWith('/api/')) {
     event.respondWith(fetch(event.request));
     return;
   }
