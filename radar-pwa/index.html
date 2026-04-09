@@ -741,11 +741,8 @@ function fetchRadarForCurrentRoute(){
   fetchOfficialRoute(rd.fLat,rd.fLng,rd.to.lt,rd.to.ln,fromDistId,toDistId)
     .then(official=>{
       placeRadar(official);
-      if(official){
-        document.getElementById('cR').textContent=official.RadarCount||0;
-        document.getElementById('cC').textContent=official.ControlPointCount||0;
-        document.getElementById('cK').textContent=official.CorridorCount||0;
-      }
+      // Counts are now set inside placeRadar() based on route-filtered data
+      // so radars/corridors off the current route are excluded.
     });
 }
 
@@ -756,10 +753,29 @@ function placeRadar(official){
 
   // ── OFFICIAL İÇİŞLERİ DATA ──
   if(official){
+    // Route-proximity filter: keep only points within 3km of the active route
+    // (the official API sometimes returns items from parallel/nearby roads).
+    // Kontrol noktası (control points) have no GPS, so they can't be filtered
+    // by location and we keep the API's official count.
+    const _rteCoords=(rd&&rd.geo&&rd.geo.coordinates)||[];
+    const _rteTot=_rteCoords.length;
+    const _rteStep=Math.max(1,Math.floor(_rteTot/200));
+    const _nearRoute=(lat,lng)=>{
+      if(!_rteTot)return true;
+      let minD=Infinity;
+      for(let i=0;i<_rteTot;i+=_rteStep){
+        const[ln,lt]=_rteCoords[i];
+        const d=haversineKm(lat,lng,lt,ln);
+        if(d<minD)minD=d;
+        if(minD<=3)return true;
+      }
+      return minD<=3;
+    };
     (official.SpeedTunnels||[]).forEach(tn=>{
       const lat=tn.startLatY||(tn.coordinates&&tn.coordinates[0]?tn.coordinates[0].y:null);
       const lng=tn.startLonX||(tn.coordinates&&tn.coordinates[0]?tn.coordinates[0].x:null);
       if(!lat||!lng)return;
+      if(!_nearRoute(lat,lng))return;
       const spd=tn.speedLimit||'?';
       const prov=(tn.provinceName||'').trim();
       const dist=(tn.districtName||'').trim();
@@ -770,15 +786,18 @@ function placeRadar(official){
       addMapMarker(lat,lng,'🛣️','#51cf66',spd,`<b>🛣️ Hız Koridoru</b><br>📍 ${name}<br>🏙️ ${prov} ${dist}<br>⚡ ${spd} km/s`);
       if(tn.endLatY&&tn.endLonX)
         radarPoints.push({lat:tn.endLatY,lng:tn.endLonX,type:'corridor',icon:'🛣️',label:'Hız Koridoru',count:1,cls:'corridor',city:prov,maxspeed:tn.speedLimit,alerted1km:false,alerted500m:false});
+      tK++;
     });
     (official.Radars||[]).forEach(r=>{
       const lat=r.latitude||r.startLatY;const lng=r.longitude||r.startLonX;
       if(!lat||!lng)return;
+      if(!_nearRoute(lat,lng))return;
       const spd=r.speedLimit||'?';const prov=(r.provinceName||'').trim();
       radarPoints.push({lat,lng,type:'radar',icon:'📡',label:'Radar',count:1,cls:'',city:prov,maxspeed:r.speedLimit,alerted1km:false,alerted500m:false});
       addMapMarker(lat,lng,'📡','#ff6b6b',spd,`<b>📡 Radar</b><br>🏙️ ${prov}<br>⚡ ${spd} km/s`);
+      tR++;
     });
-    tR=official.RadarCount||0;tC=official.ControlPointCount||0;tK=official.CorridorCount||0;
+    tC=official.ControlPointCount||0;
   }
 
   // ── OSM FIXED CAMERAS (supplement) ──
