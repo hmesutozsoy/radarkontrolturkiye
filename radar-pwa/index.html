@@ -738,12 +738,23 @@ function fetchRadarForCurrentRoute(){
   const fromDistId=fromSel.districtId||0;
   const toDistId=toSel.districtId||0;
 
-  fetchOfficialRoute(rd.fLat,rd.fLng,rd.to.lt,rd.to.ln,fromDistId,toDistId)
-    .then(official=>{
-      placeRadar(official);
-      // Counts are now set inside placeRadar() based on route-filtered data
-      // so radars/corridors off the current route are excluded.
-    });
+  // Render OSM-only data immediately so the map isn't empty while the
+  // İçişleri API (which can be slow / cold-start) is in flight.
+  placeRadar(null);
+
+  // Race the API against a 20s timeout — if the API hangs, we keep the
+  // OSM data already on screen rather than waiting forever.
+  const apiPromise=fetchOfficialRoute(rd.fLat,rd.fLng,rd.to.lt,rd.to.ln,fromDistId,toDistId);
+  const timeoutPromise=new Promise(resolve=>setTimeout(()=>resolve('__timeout__'),20000));
+
+  Promise.race([apiPromise,timeoutPromise]).then(official=>{
+    if(official==='__timeout__'){
+      console.warn('İçişleri API timeout — keeping OSM data only');
+      return;
+    }
+    // Re-render with official data merged in (placeRadar clears & redraws)
+    placeRadar(official);
+  });
 }
 
 function placeRadar(official){
