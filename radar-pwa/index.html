@@ -807,7 +807,7 @@ function placeRadar(official){
     // by location and we keep the API's official count.
     const _rteCoords=(rd&&rd.geo&&rd.geo.coordinates)||[];
     const _rteTot=_rteCoords.length;
-    const _rteStep=Math.max(1,Math.floor(_rteTot/200));
+    const _rteStep=Math.max(1,Math.floor(_rteTot/500));
     const _nearRoute=(lat,lng)=>{
       if(!_rteTot)return true;
       let minD=Infinity;
@@ -815,9 +815,9 @@ function placeRadar(official){
         const[ln,lt]=_rteCoords[i];
         const d=haversineKm(lat,lng,lt,ln);
         if(d<minD)minD=d;
-        if(minD<=3)return true;
+        if(minD<=0.5)return true;
       }
-      return minD<=3;
+      return minD<=0.5;
     };
     (official.SpeedTunnels||[]).forEach(tn=>{
       const lat=tn.startLatY||(tn.coordinates&&tn.coordinates[0]?tn.coordinates[0].y:null);
@@ -880,7 +880,7 @@ function placeRadar(official){
       for(let i=0;i<tot;i+=Math.max(1,Math.floor(tot/500))){
         const[lng,lat]=coords[i];minD=Math.min(minD,haversineKm(cam.lat,cam.lng,lat,lng));
       }
-      if(minD>1)return;
+      if(minD>0.5)return;
       const t=cam.type||'radar';
       let icon,col,label,cls;
       if(t==='corridor'){icon='🛣️';col='#51cf66';label='Hız Koridoru';cls='corridor'}
@@ -940,11 +940,9 @@ function toggleTheme(){
   document.body.classList.toggle('light',!isDarkTheme);
   document.getElementById('themeToggle').textContent=isDarkTheme?'🌙':'☀️';
   document.querySelector('meta[name="theme-color"]').content=isDarkTheme?'#0f1218':'#f0f2f5';
-  map.removeLayer(tileLayer);
-  tileLayer=L.tileLayer(isDarkTheme
+  tileLayer.setUrl(isDarkTheme
     ?'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-    :'https://{s}.basemaps.cartocdn.com/voyager/{z}/{x}/{y}{r}.png',{maxZoom:19}).addTo(map);
-  tileLayer.setZIndex(0);
+    :'https://{s}.basemaps.cartocdn.com/voyager/{z}/{x}/{y}{r}.png');
 }
 
 function toggleKontrolMarkers(){
