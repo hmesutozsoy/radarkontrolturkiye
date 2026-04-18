@@ -21,6 +21,11 @@
   --radar:#ff6b6b;--control:#ffd43b;--corridor:#51cf66;
   --safe-top:env(safe-area-inset-top,0px);--safe-bottom:env(safe-area-inset-bottom,0px);
 }
+body.light{
+  --bg:#f0f2f5;--panel:#ffffff;--card:#f5f6f8;--border:#dde1e8;
+  --text:#1a1d24;--muted:#6b7280;--accent:#2563eb;
+  --radar:#dc2626;--control:#ca8a04;--corridor:#16a34a;
+}
 html,body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);height:100%;overflow:hidden;touch-action:manipulation}
 
 #map{position:absolute;inset:0;z-index:1}
@@ -131,6 +136,8 @@ html,body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text
 .chip-label{display:block;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:0.3px;margin-top:1px}
 .radar-chip.info{flex:0;padding:12px 14px;cursor:pointer;opacity:0.6}
 .radar-chip.info:hover{opacity:1}
+.radar-chip.c{cursor:pointer;transition:all 0.2s}
+.radar-chip.c.active{outline:2px solid var(--control);outline-offset:-2px;border-radius:12px}
 .info-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:900;justify-content:center;align-items:center}
 .info-modal.active{display:flex}
 .info-modal-content{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:20px;max-width:340px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.4)}
@@ -195,6 +202,13 @@ html,body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text
 .legend-float.hidden{opacity:0;pointer-events:none;transform:translateX(-50%) translateY(20px)}
 .li{display:flex;align-items:center;gap:5px}
 .ld{width:8px;height:8px;border-radius:50%}
+.theme-toggle{
+  position:fixed;z-index:999;bottom:calc(var(--safe-bottom) + 12px);right:12px;
+  background:var(--panel);border:1px solid var(--border);border-radius:50%;
+  width:40px;height:40px;display:flex;align-items:center;justify-content:center;
+  font-size:18px;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,0.3);
+  transition:all 0.3s ease;
+}
 
 /* ── GPS dot ── */
 .gps-dot{width:18px;height:18px;position:relative}
@@ -267,10 +281,7 @@ html,body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text
   animation:spin 0.8s linear infinite;
 }
 @keyframes spin{to{transform:rotate(360deg)}}
-/* Kontrol Konum Info (kki) — Phase 1 disclosure */
-.radar-chip.c{cursor:pointer;position:relative}
-.radar-chip.c::after{content:'ⓘ';font-size:10px;opacity:0.55;margin-left:3px;color:var(--control)}
-.radar-chip.c:active{opacity:0.7}
+/* Kontrol toggle */
 .kki-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(120px);max-width:min(92%,420px);padding:14px 18px;background:rgba(24,28,37,0.96);color:#fff;border:1px solid rgba(255,212,59,0.3);border-radius:12px;font-size:13px;line-height:1.45;box-shadow:0 6px 24px rgba(0,0,0,0.45);opacity:0;transition:transform 0.3s ease,opacity 0.3s ease;z-index:10000;pointer-events:none;text-align:left}
 .kki-toast.on{transform:translateX(-50%) translateY(0);opacity:1}
 </style>
@@ -357,7 +368,7 @@ html,body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text
     </div>
     <div class="radar-strip">
       <div class="radar-chip r"><span>📡</span><span class="num" id="cR">0</span><span class="chip-label">Radar</span></div>
-      <div class="radar-chip c"><span>🚧</span><span class="num" id="cC">0</span><span class="chip-label">Kontrol</span></div>
+      <div class="radar-chip c" id="kontrolChip" onclick="toggleKontrolMarkers()" title="Tahmini konumları göster/gizle"><span>🚧</span><span class="num" id="cC">0</span><span class="chip-label">Kontrol</span></div>
       <div class="radar-chip k"><span>🛣️</span><span class="num" id="cK">0</span><span class="chip-label">Koridor</span></div>
       <div class="radar-chip info" onclick="showInfoModal()"><span>ℹ️</span></div>
     </div>
@@ -367,7 +378,7 @@ html,body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text
       <div class="info-modal-content" onclick="event.stopPropagation()">
         <div class="info-modal-header">Simgeler<span onclick="document.getElementById('infoModal').classList.remove('active')" style="cursor:pointer;float:right">✕</span></div>
         <div class="info-row"><span class="info-dot" style="background:#ff6b6b">📡</span><div><b>Radar</b><br>Sabit hız radarları. Hız limitini aştığınızda fotoğrafınız çekilir.</div></div>
-        <div class="info-row"><span class="info-dot" style="background:#ffd43b">🚧</span><div><b>Kontrol Noktası</b><br>Polis kontrol noktaları (kimlik, ehliyet, alkol kontrolü). Günlük değiştiği için haritada gösterilmez, sadece sayısı verilir.</div></div>
+        <div class="info-row"><span class="info-dot" style="background:#ffd43b">🚧</span><div><b>Kontrol Noktası</b><br>Polis kontrol noktaları. Tahmini konumları görmek için radar panelinde 🚧 simgesine dokunun. Gerçek konum günlük değişir.</div></div>
         <div class="info-row"><span class="info-dot" style="background:#51cf66">🛣️</span><div><b>Hız Koridoru</b><br>İki nokta arasında ortalama hızınız ölçülür. Limit üzerindeyseniz ceza kesilir.</div></div>
         <div style="margin-top:12px;font-size:11px;color:var(--muted)">Veriler: T.C. İçişleri Bakanlığı + OpenStreetMap</div>
       </div>
@@ -399,6 +410,7 @@ html,body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text
   <div class="li"><div class="ld" style="background:var(--control)"></div>Kontrol</div>
   <div class="li"><div class="ld" style="background:var(--corridor)"></div>Hız Koridoru</div>
 </div>
+<div class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Tema değiştir">🌙</div>
 
 <script src="radar_data.js"></script>
 <script>
@@ -436,11 +448,15 @@ const C=[
 const POP=['İstanbul','Ankara','İzmir','Antalya','Bursa','Konya','Trabzon','Gaziantep'];
 
 // ═══════════ MAP ═══════════
-const map=L.map('map',{center:[39,35],zoom:6,zoomControl:false,attributionControl:false});
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:19}).addTo(map);
+const turkeyBounds=L.latLngBounds([35.5,25.5],[42.5,45.0]);
+const map=L.map('map',{center:[39,35],zoom:6,zoomControl:false,attributionControl:false,maxBounds:turkeyBounds.pad(0.1),minZoom:5});
+let tileLayer=L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:19}).addTo(map);
+let isDarkTheme=true;
 const routeLayer=L.layerGroup().addTo(map);
 const radarLayer=L.layerGroup().addTo(map);
+const kontrolLayer=L.layerGroup(); // NOT added to map by default
 const gpsLayer=L.layerGroup().addTo(map);
+let showEstimatedKontrol=false;
 
 // ═══════════ STATE ═══════════
 const PROXY='';
@@ -830,6 +846,30 @@ function placeRadar(official){
       tR++;
     });
     tC=official.ControlPointCount||0;
+
+    // ── ESTIMATED KONTROL NOKTASI POSITIONS ──
+    // Government provides count but no GPS. Distribute evenly along route.
+    if(tC>0&&rd&&rd.geo&&rd.geo.coordinates){
+      kontrolLayer.clearLayers();
+      const rCoords=rd.geo.coordinates;
+      const totalPts=rCoords.length;
+      // Skip first/last 10% of route (kontrol points rarely at very start/end)
+      const startIdx=Math.floor(totalPts*0.1);
+      const endIdx=Math.floor(totalPts*0.9);
+      const span=endIdx-startIdx;
+      const step=Math.max(1,Math.floor(span/(tC+1)));
+      for(let k=0;k<tC;k++){
+        const idx=Math.min(startIdx+step*(k+1),totalPts-1);
+        const[lng,lat]=rCoords[idx];
+        radarPoints.push({lat,lng,type:'control',icon:'🚧',label:'Kontrol Noktası',count:1,cls:'control',city:'Tahmini konum',maxspeed:null,alerted1km:false,alerted500m:false});
+        const badge='';
+        const ic=L.divIcon({className:'',html:`<div style="position:relative;width:36px;height:36px;background:#ffd43b;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;box-shadow:0 2px 10px #ffd43b66;cursor:pointer;opacity:0.75">🚧</div>`,iconSize:[36,36],iconAnchor:[18,18]});
+        L.marker([lat,lng],{icon:ic}).addTo(kontrolLayer)
+          .bindPopup(`<b>🚧 Kontrol Noktası</b><br>⚠️ Tahmini konum<br><span style="font-size:11px;color:#7a8399">Gerçek konum günlük değişir</span>`);
+      }
+      // Show/hide based on current toggle state
+      if(showEstimatedKontrol&&!map.hasLayer(kontrolLayer))map.addLayer(kontrolLayer);
+    }
   }
 
   // ── OSM FIXED CAMERAS (supplement) ──
@@ -840,13 +880,14 @@ function placeRadar(official){
       for(let i=0;i<tot;i+=Math.max(1,Math.floor(tot/500))){
         const[lng,lat]=coords[i];minD=Math.min(minD,haversineKm(cam.lat,cam.lng,lat,lng));
       }
-      if(minD>0.5)return;
+      if(minD>1)return;
       const t=cam.type||'radar';
       let icon,col,label,cls;
       if(t==='corridor'){icon='🛣️';col='#51cf66';label='Hız Koridoru';cls='corridor'}
       else if(t==='control'){icon='🚧';col='#ffd43b';label='Kontrol Noktası';cls='control'}
       else{icon='📡';col='#ff6b6b';label='Sabit Kamera';cls=''}
       if(!official){if(t==='corridor')tK++;else if(t==='control')tC++;else tR++}
+      else{if(t!=='corridor'&&t!=='control')tR++}  // Add OSM radar count even with official data
       const city=cam.city||cam.desc||cam.description||'';
       radarPoints.push({lat:cam.lat,lng:cam.lng,type:t,icon,label,count:1,cls,city,maxspeed:cam.maxspeed,alerted1km:false,alerted500m:false});
       addMapMarker(cam.lat,cam.lng,icon,col,cam.maxspeed,`<b>${city}</b>${cam.maxspeed?' · '+cam.maxspeed+' km/s':''}<br>${icon} ${label}`);
@@ -893,6 +934,29 @@ function renderSteps(){
 }
 function toggleSteps(){stOpen=!stOpen;document.getElementById('stepsDrw').classList.toggle('open',stOpen)}
 function showInfoModal(){document.getElementById('infoModal').classList.add('active')}
+
+function toggleTheme(){
+  isDarkTheme=!isDarkTheme;
+  document.body.classList.toggle('light',!isDarkTheme);
+  document.getElementById('themeToggle').textContent=isDarkTheme?'🌙':'☀️';
+  document.querySelector('meta[name="theme-color"]').content=isDarkTheme?'#0f1218':'#f0f2f5';
+  map.removeLayer(tileLayer);
+  tileLayer=L.tileLayer(isDarkTheme
+    ?'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+    :'https://{s}.basemaps.cartocdn.com/voyager/{z}/{x}/{y}{r}.png',{maxZoom:19}).addTo(map);
+  tileLayer.setZIndex(0);
+}
+
+function toggleKontrolMarkers(){
+  showEstimatedKontrol=!showEstimatedKontrol;
+  const chip=document.getElementById('kontrolChip');
+  chip.classList.toggle('active',showEstimatedKontrol);
+  if(showEstimatedKontrol){
+    map.addLayer(kontrolLayer);
+  }else{
+    map.removeLayer(kontrolLayer);
+  }
+}
 
 // ═══════════ GPS ═══════════
 function locateMe(){
@@ -1063,7 +1127,9 @@ function playBeep(freq,duration){
 function clearAll(){
   // Stop nav BEFORE clearing rd (stopNav reads rd for fitBounds)
   if(isNav)stopNav();
-  routeLayer.clearLayers();radarLayer.clearLayers();rd=null;officialData=null;
+  routeLayer.clearLayers();radarLayer.clearLayers();kontrolLayer.clearLayers();map.removeLayer(kontrolLayer);rd=null;officialData=null;
+  showEstimatedKontrol=false;
+  const kc=document.getElementById('kontrolChip');if(kc)kc.classList.remove('active');
   allRoutes=[];selectedRouteIdx=0;
   radarPoints=[];
   document.getElementById('radarStrip').classList.remove('active');
