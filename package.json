@@ -1,0 +1,13 @@
+{
+  "name": "radar-pwa",
+  "version": "1.0.0",
+  "description": "Radar Haritası - Türkiye Trafik Kontrol",
+  "private": true,
+  "scripts": {
+    "build": "echo 'Static site - no build needed'",
+    "dev": "echo 'Static site - serve radar-pwa directory'"
+  },
+  "dependencies": {
+    "@vercel/analytics": "^1.4.1"
+  }
+}
